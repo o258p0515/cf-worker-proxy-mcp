@@ -1,0 +1,136 @@
+name: Deploy GitHub MCP Proxy
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: github-mcp-proxy-deploy
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Pre-flight validate environment
+        env:
+          CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
+          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
+          FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          RTDB_URL: ${{ secrets.RTDB_URL }}
+          RTDB_AUTH_URL: ${{ secrets.RTDB_AUTH_URL }}
+        run: node scripts/validate-env.mjs
+      - name: Install dependencies, typecheck and test
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+      - name: Prepare Cloudflare infrastructure
+        env:
+          CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+        run: node scripts/prepare-deploy.mjs
+      - name: Enforce immutable MCP connector hostname
+        run: |
+          set -euo pipefail
+          test "$WORKER_DOMAIN" = "github-mcp-proxy.o258p0515.dpdns.org"
+          test "$PUBLIC_DOMAIN" = "github-mcp-proxy.o258p0515.dpdns.org"
+      - name: Publish fixed Worker endpoint
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-mcp-proxy-endpoint
+          path: worker-endpoint.txt
+          retention-days: 7
+      - name: Deploy Worker
+        run: npx wrangler deploy --config wrangler.deploy.jsonc
+      - name: Sync runtime secrets
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
+          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
+          RTDB_URL: ${{ secrets.RTDB_URL }}
+          RTDB_AUTH_URL: ${{ secrets.RTDB_AUTH_URL }}
+          FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -euo pipefail
+          node scripts/sync-secrets.mjs | npx wrangler secret bulk --config wrangler.deploy.jsonc
+      - name: Smoke test Worker health endpoints
+        run: |
+          set -euo pipefail
+          sleep 5
+          HEALTH=$(curl --fail --silent --show-error "https://$WORKER_DOMAIN/health")
+          echo "Worker health: $HEALTH"
+          echo "$HEALTH" | grep -q '"status":"ok"'
+          PUBLIC_HEALTH=$(curl --fail --silent --show-error "https://$PUBLIC_DOMAIN/health")
+          echo "Public endpoint health: $PUBLIC_HEALTH"
+          echo "$PUBLIC_HEALTH" | grep -q '"status":"ok"'
+      - name: Smoke test OAuth metadata
+        run: |
+          set -euo pipefail
+          META=$(curl --fail --silent --show-error "https://$WORKER_DOMAIN/.well-known/oauth-authorization-server")
+          echo "OAuth metadata: $META"
+          echo "$META" | grep -q '"registration_endpoint"'
+          echo "$META" | grep -q 'github-mcp-proxy.o258p0515.dpdns.org'
+          if echo "$META" | grep -q '5b1b15'; then echo 'Legacy hostname found in OAuth metadata'; exit 1; fi
+      - name: Smoke test unauthenticated request is rejected
+        run: |
+          set -euo pipefail
+          STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' -D /tmp/mcp-unauth-headers -X POST "https://$WORKER_DOMAIN/mcp" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}')
+          echo "Unauthenticated HTTP status: $STATUS"
+          test "$STATUS" = "401"
+          grep -qi 'WWW-Authenticate: Bearer resource_metadata=' /tmp/mcp-unauth-headers
+      - name: Smoke test authenticated public connector endpoint
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+        run: |
+          set -euo pipefail
+          INIT=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":22,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"public-endpoint-smoke","version":"1"}}}')
+          echo "Public connector MCP initialize response: $INIT"
+          echo "$INIT" | grep -q 'github-mcp-proxy'
+          TOOLS=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":23,"method":"tools/list","params":{}}')
+          echo "Public connector tool catalog bytes: ${#TOOLS}"
+          echo "$TOOLS" | grep -q 'list_github_accounts'
+          echo "$TOOLS" | grep -q '"account"'
+          ACCOUNT=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"get_me","arguments":{"account":"personal"}}}')
+          echo "Public connector selected-account response: $ACCOUNT"
+          echo "$ACCOUNT" | grep -q 'login'
+      - name: Record deployment result and endpoint
+        if: always()
+        env:
+          DEPLOYED_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          ENDPOINT=""
+          if [ -n "${PUBLIC_DOMAIN:-}" ]; then ENDPOINT="https://$PUBLIC_DOMAIN/mcp"; fi
+          cat > deployment-status.json <<EOF_STATUS
+          {
+            "status": "$JOB_STATUS",
+            "workflow_run_id": "$RUN_ID",
+            "deployed_commit": "$DEPLOYED_SHA",
+            "endpoint": "$ENDPOINT"
+          }
+          EOF_STATUS
+          git add -f worker-endpoint.txt deployment-status.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(deploy): record deployment result [skip ci]" || echo 'No deployment status changes to commit'
+          git push origin HEAD:refs/heads/main

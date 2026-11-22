@@ -1,0 +1,31 @@
+name: GitHub MCP Proxy CI
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'deployment-status.json'
+      - 'worker-endpoint.txt'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Validate deployment scripts syntax
+        run: |
+          node --check scripts/prepare-deploy.mjs
+          node --check scripts/sync-secrets.mjs
+          node --check scripts/validate-env.mjs
