@@ -1,4 +1,4 @@
-import { sealBox } from "@byokit/seal";
+import { seal } from "tweetnacl-sealedbox-js";
 
 type SecretAction = "list_github_secrets" | "set_github_secret" | "delete_github_secret";
 
@@ -77,7 +77,7 @@ export async function runGitHubSecretTool(
   if (typeof key?.key !== "string" || typeof key?.key_id !== "string") throw new Error("GitHub did not return a valid Actions public key.");
   // Pure-JS sealed-box implementation: no WebAssembly compilation is needed in Workers.
   const publicKeyBytes = Uint8Array.from(atob(key.key), char => char.charCodeAt(0));
-  const encrypted = sealBox(new TextEncoder().encode(value), publicKeyBytes);
+  const encrypted = seal(new TextEncoder().encode(value), publicKeyBytes);
   const encryptedValue = toBase64(encrypted);
   await githubRequest(token, base + "/" + encodeURIComponent(name), {
     method: "PUT",
