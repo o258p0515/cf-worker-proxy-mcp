@@ -3,7 +3,6 @@ import type { McpTool } from "../types";
 const repoFields = {
   owner: { type: "string", description: "Repository owner" },
   repo: { type: "string", description: "Repository name" },
-  account: { type: "string", description: "Optional GitHub account alias from list_github_accounts" }
 };
 const secretTargetRequired = ["owner", "repo"];
 export function getProxyCustomTools(includeAdmin = false): McpTool[] {
