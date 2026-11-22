@@ -36,7 +36,7 @@ export async function handleJsonRpcMessage(msg:JsonRpc,env:Env,ctx:AuthContext):
   if(msg.method==="resources/list")return result(msg.id,{resources:[{uri:"github://accounts",name:"GitHub Accounts Directory",description:"Enabled GitHub account aliases and metadata (never tokens)",mimeType:"application/json"}]});
   if(msg.method==="resources/read"){if(p.uri!=="github://accounts")return error(msg.id,-32602,"Unknown resource");return result(msg.id,{contents:[{uri:p.uri,mimeType:"application/json",text:JSON.stringify(await listPublicAccounts(env))}]});}
   if(msg.method==="tools/list"){
-   let tools:McpTool[]=[];const cached=await env.CACHE_KV.get("mcp:tools_catalog:v1");
+   let tools:McpTool[]=[];const cached=await env.CACHE_KV.get("mcp:tools_catalog:v2");
    if(cached){try{tools=JSON.parse(cached);}catch{}}
    if(!tools.length){const accounts=await getAccounts(env);const source=Object.entries(accounts).find(([,a])=>a.enabled&&a.is_catalog_source)||Object.entries(accounts).find(([,a])=>a.enabled);if(!source)throw Error("No enabled GitHub account available");const upstream=await callUpstream(env,source[1],source[0],{jsonrpc:"2.0",id:"catalog",method:"tools/list",params:{}});tools=(upstream?.result?.tools||[]).map(injectAccountParameter);await env.CACHE_KV.put("mcp:tools_catalog:v1",JSON.stringify(tools),{expirationTtl:300});}
    return result(msg.id,{tools:[...getProxyCustomTools(),...tools]});
@@ -51,7 +51,7 @@ export async function handleJsonRpcMessage(msg:JsonRpc,env:Env,ctx:AuthContext):
    const writeTool=/(?:^|_)(?:write|create|update|delete|push|merge|add|remove|fork|dismiss|submit|request|close|reopen|assign|cancel|rerun|enable|disable|set|put|patch)(?:_|$)/i;
    // This tool starts a repository security scan even though its name does not
    // contain a conventional write verb. Treat it as mutating for read-only accounts.
-   const explicitlyMutatingTools=new Set(["run_secret_scanning"]);
+   const explicitlyMutatingTools=new Set(["run_secret_scanning","actions_run_trigger"]);
    if(account.readonly&&(writeTool.test(name)||explicitlyMutatingTools.has(name)))return result(msg.id,textResult("Account '"+alias+"' is read-only; this write operation is blocked.",true));
    delete args.account;const start=Date.now();let status="ok";
    try{
