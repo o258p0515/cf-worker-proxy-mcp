@@ -1,10 +1,5 @@
 name: Deploy GitHub MCP Proxy
 on:
-  push:
-    branches: [main]
-    paths:
-      - '**'
-      - '.github/workflows/**'
   workflow_dispatch:
 permissions:
   contents: write
@@ -134,3 +129,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore(deploy): record deployment result [skip ci]" || echo 'No deployment status changes to commit'
           git push origin HEAD:refs/heads/main
+  132
