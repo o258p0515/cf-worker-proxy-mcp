@@ -4,7 +4,7 @@ A Cloudflare Worker that transparently proxies the official GitHub Remote MCP en
 
 ## Selecting a GitHub account
 
-Set the optional `X-GitHub-Account` HTTP header to an enabled alias from Firebase `/github_accounts` (for example, `personal`). If omitted, the configured `is_catalog_source` account is used, or the first enabled account. The legacy `account` argument is accepted as a routing hint for existing clients but is stripped before forwarding and is not added to official GitHub tool schemas. The account directory is exposed only to the protected API Explorer, not added to the official MCP tool catalog.
+Agents can call `list_github_accounts` to discover enabled aliases, usernames, organizations, and read-only status (credentials are never returned), then call `select_github_account` with the chosen alias. The selection is remembered for subsequent GitHub MCP calls for that authenticated subject and can be changed at any time. The proxy also automatically routes repository/organization-scoped calls when exactly one configured account matches the owner, username, or `orgs` metadata. If routing is ambiguous, the error directs the agent to list and select an account. Existing clients can still use `X-GitHub-Account`; the legacy `account` argument is accepted as a routing hint but stripped before forwarding. Official GitHub tool names and schemas remain unchanged; the two account-management tools are additive proxy tools.
 
 ## Endpoints
 
@@ -38,11 +38,11 @@ Add repository secrets under **Settings → Secrets and variables → Actions**:
 - `FIREBASE_SERVICE_ACCOUNT_JSON_B64` or `FIREBASE_SERVICE_ACCOUNT_JSON`
 - `RTDB_URL` when using a Service Account, or `RTDB_AUTH_URL` as fallback
 
-Workflows: `.github/workflows/ci.yml` runs typecheck/tests; `.github/workflows/deploy.yml` performs Cloudflare deployment and live MCP smoke tests. Deployment is manual-only.
+Workflows: `.github/workflows/ci.yml` runs typecheck/tests; `.github/workflows/deploy.yml` deploys on pushes to `main` and supports manual dispatch, then runs live MCP smoke tests.
 
 ## Architecture
 
-- `src/mcp`: JSON-RPC proxy, dynamic upstream tool discovery, mandatory account schema injection, and transports.
+- `src/mcp`: JSON-RPC proxy, dynamic upstream tool discovery, authenticated account selection/routing, and transports.
 - `src/api/swagger.ts`: protected interactive API Explorer.
 - `src/rtdb`: Firebase Service Account RS256 exchange and encrypted account cache.
 - `src/auth`: static token and OAuth 2.1.
