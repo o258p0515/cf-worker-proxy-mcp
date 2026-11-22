@@ -2,6 +2,5 @@
   "status": "not-deployed",
   "workflow_run_id": null,
   "deployed_commit": null,
-  "endpoint": "https://github-mcp-proxy.o258p0515.dpdns.org/mcp"
+  "endpoint": null
 }
-    7
