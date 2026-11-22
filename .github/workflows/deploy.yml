@@ -69,7 +69,7 @@ jobs:
           curl --fail --silent --show-error "https://$WORKER_DOMAIN/health" | tee /tmp/health.json
           grep -q '"status":"ok"' /tmp/health.json
           curl --fail --silent --show-error "https://$PUBLIC_DOMAIN/version" | tee /tmp/version.json
-          grep -Eq '"version":"v\\.[0-9]{2}\\.[0-9]{4}\\.[0-9]{4}"' /tmp/version.json
+          grep -Eq '"version":"v\.[0-9]{2}\.[0-9]{4}\.[0-9]{4}"' /tmp/version.json
           curl --fail --silent --show-error "https://$PUBLIC_DOMAIN/api" | grep -q 'API Explorer'
           API_STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "https://$PUBLIC_DOMAIN/api/rpc" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
           test "$API_STATUS" = "401"
