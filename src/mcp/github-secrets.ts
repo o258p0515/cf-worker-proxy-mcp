@@ -20,6 +20,7 @@ function apiHeaders(token: string) {
   return new Headers({
     Authorization: "Bearer " + token,
     Accept: "application/vnd.github+json",
+    "User-Agent": "github-mcp-proxy",
     "X-GitHub-Api-Version": API_VERSION,
     "Content-Type": "application/json"
   });
