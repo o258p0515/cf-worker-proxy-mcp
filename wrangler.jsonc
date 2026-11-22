@@ -9,6 +9,7 @@
   "vars": {
     "PUBLIC_ORIGIN": "https://__PUBLIC_DOMAIN__",
     "GITHUB_MCP_UPSTREAM_URL": "https://api.githubcopilot.com/mcp/",
+    "GITHUB_MCP_TOOLSETS": "all",
     "RTDB_CACHE_TTL_SECONDS": "300"
   },
   "kv_namespaces": [
