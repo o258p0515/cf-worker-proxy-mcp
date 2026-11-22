@@ -10,6 +10,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,7 +24,6 @@ jobs:
           CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
-          MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
           MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
           MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
           MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
@@ -41,7 +42,6 @@ jobs:
           CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
-          MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
         run: node scripts/prepare-deploy.mjs
       - name: Enforce configured MCP hostname
         run: |
