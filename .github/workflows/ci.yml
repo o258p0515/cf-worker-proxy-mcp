@@ -2,8 +2,7 @@ name: GitHub MCP Proxy CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'deployment-status.json'
+    paths-ignore: ['deployment-status.json']
   pull_request:
   workflow_dispatch:
 permissions:
@@ -20,7 +19,7 @@ jobs:
       - name: Generate Vietnam-time build version
         run: node scripts/generate-version.mjs
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
       - name: Typecheck
         run: npm run typecheck
       - name: Unit tests
