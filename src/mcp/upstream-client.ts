@@ -12,7 +12,7 @@ function isExpiredSession(status:number,body:string,hadSession:boolean):boolean{
 async function request(env:Env,account:RtdbAccount,alias:string,message:any,session?:string):Promise<any>{
  const headers=new Headers({"Authorization":"Bearer "+account.token,"Content-Type":"application/json","Accept":"application/json, text/event-stream","MCP-Protocol-Version":"2025-03-26"});
  if(account.readonly)headers.set("X-MCP-Readonly","true");
- if(env.GITHUB_MCP_TOOLSETS?.trim())headers.set("X-MCP-Toolsets",env.GITHUB_MCP_TOOLSETS.trim());
+ const toolsets=(env.GITHUB_MCP_TOOLSETS?.trim()||"all");if(toolsets)headers.set("X-MCP-Toolsets",toolsets);
  if(session)headers.set("Mcp-Session-Id",session);
  const r=await fetch(env.GITHUB_MCP_UPSTREAM_URL||"https://api.githubcopilot.com/mcp/",{method:"POST",headers,body:JSON.stringify(message)});
  const sid=r.headers.get("Mcp-Session-Id");if(sid)sessions.set(alias,sid);
