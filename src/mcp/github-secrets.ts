@@ -1,5 +1,3 @@
-import sodium from "libsodium-wrappers";
-
 type SecretAction = "list_github_secrets" | "set_github_secret" | "delete_github_secret";
 const API_VERSION = "2022-11-28";
 
@@ -67,6 +65,9 @@ export async function runGitHubSecretTool(
   if (!value || value.length > 48000) throw new Error("value must be a non-empty string no longer than 48,000 characters.");
   const key = await githubRequest(token, base + "/public-key");
   if (typeof key?.key !== "string" || typeof key?.key_id !== "string") throw new Error("GitHub did not return a valid Actions public key.");
+  // libsodium initializes random/wasm facilities; defer module evaluation until
+  // inside the request handler because Workers disallow random/I/O at global scope.
+  const { default: sodium } = await import("libsodium-wrappers");
   await sodium.ready;
   const encrypted = sodium.crypto_box_seal(sodium.from_string(value), sodium.from_base64(key.key, sodium.base64_variants.ORIGINAL));
   const encryptedValue = sodium.to_base64(encrypted, sodium.base64_variants.ORIGINAL);
