@@ -22,6 +22,7 @@ jobs:
           CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+          MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
           MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
           MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
           MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
@@ -40,18 +41,13 @@ jobs:
           CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+          MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
         run: node scripts/prepare-deploy.mjs
-      - name: Enforce immutable MCP connector hostname
+      - name: Enforce configured MCP hostname
         run: |
           set -euo pipefail
-          test "$WORKER_DOMAIN" = "github-mcp-proxy.o258p0515.dpdns.org"
-          test "$PUBLIC_DOMAIN" = "github-mcp-proxy.o258p0515.dpdns.org"
-      - name: Publish fixed Worker endpoint
-        uses: actions/upload-artifact@v4
-        with:
-          name: github-mcp-proxy-endpoint
-          path: worker-endpoint.txt
-          retention-days: 7
+          test "$WORKER_DOMAIN" = "$MCP_DOMAIN"
+          test "$PUBLIC_DOMAIN" = "$MCP_DOMAIN"
       - name: Deploy Worker
         run: npx wrangler deploy --config wrangler.deploy.jsonc
       - name: Sync runtime secrets
@@ -82,8 +78,7 @@ jobs:
           META=$(curl --fail --silent --show-error "https://$WORKER_DOMAIN/.well-known/oauth-authorization-server")
           echo "OAuth metadata: $META"
           echo "$META" | grep -q '"registration_endpoint"'
-          echo "$META" | grep -q 'github-mcp-proxy.o258p0515.dpdns.org'
-          if echo "$META" | grep -q '5b1b15'; then echo 'Legacy hostname found in OAuth metadata'; exit 1; fi
+          echo "$META" | grep -Fq "$MCP_DOMAIN"
       - name: Smoke test unauthenticated request is rejected
         run: |
           set -euo pipefail
@@ -106,7 +101,7 @@ jobs:
           ACCOUNT=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"get_me","arguments":{"account":"personal"}}}')
           echo "Public connector selected-account response: $ACCOUNT"
           echo "$ACCOUNT" | grep -q 'login'
-      - name: Record deployment result and endpoint
+      - name: Record deployment result
         if: always()
         env:
           DEPLOYED_SHA: ${{ github.sha }}
@@ -124,9 +119,8 @@ jobs:
             "endpoint": "$ENDPOINT"
           }
           EOF_STATUS
-          git add -f worker-endpoint.txt deployment-status.json
+          git add -f deployment-status.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore(deploy): record deployment result [skip ci]" || echo 'No deployment status changes to commit'
           git push origin HEAD:refs/heads/main
-  132

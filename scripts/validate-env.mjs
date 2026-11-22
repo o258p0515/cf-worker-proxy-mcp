@@ -7,6 +7,7 @@ const add = (name, reason, fix, example) => errors.push({ name, reason, fix, exa
 const email = env.CF_API_EMAIL || "";
 const apiKey = env.CF_API_KEY || "";
 const domain = env.CF_DOMAIN || "";
+const mcpDomain = (env.MCP_DOMAIN || "").trim();
 const mcpToken = env.MCP_TOKEN || "";
 
 if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -16,7 +17,15 @@ if (apiKey.length < 30 || /\s/.test(apiKey)) {
   add("CF_API_KEY", "Global API Key thiếu hoặc không hợp lệ.", "Tạo Global API Key đủ quyền Zone Read, DNS Read/Edit và Workers KV Edit.", "<Cloudflare Global API Key>");
 }
 if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$/.test(domain)) {
-  add("CF_DOMAIN", "Phải là hostname thuần, không có scheme/path/port.", "Nhập domain đã active trong Cloudflare.", "github-mcp.example.com");
+  add("CF_DOMAIN", "Phải là hostname thuần, không có scheme/path/port.", "Nhập domain đã active trong Cloudflare.", "example.com");
+}
+if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$/.test(mcpDomain)) {
+  add("MCP_DOMAIN", "Thiếu hoặc sai hostname MCP.", "Thêm GitHub Actions repository secret MCP_DOMAIN; chỉ nhập hostname, không thêm https://, path, port hoặc dấu chấm cuối.", "github-mcp-proxy.example.com");
+} else if (mcpDomain.endsWith(".")) {
+  add("MCP_DOMAIN", "Hostname không được có dấu chấm ở cuối.", "Nhập hostname thuần.", "github-mcp-proxy.example.com");
+}
+if (mcpDomain && domain && !(mcpDomain === domain || mcpDomain.endsWith("." + domain))) {
+  warnings.push("MCP_DOMAIN must belong to the active Cloudflare zone selected by CF_DOMAIN; prepare-deploy.mjs will enforce this.");
 }
 if (mcpToken.length < 24 || /\s/.test(mcpToken)) {
   add("MCP_TOKEN", "Token bắt buộc, tối thiểu 24 ký tự và không có whitespace.", "Tạo token ngẫu nhiên dài ít nhất 32 bytes.", "mcp_live_<random-secret>");
@@ -162,9 +171,12 @@ try {
     .filter(item => item.status === "active" && (domain === item.name || domain.endsWith("." + item.name)))
     .sort((a, b) => b.name.length - a.name.length)[0];
   if (!zone) throw new Error("No active Cloudflare zone matches CF_DOMAIN");
-  const dns = await cloudflare("/zones/" + zone.id + "/dns_records?name=" + encodeURIComponent(domain));
-  if (dns.some(record => ["A", "AAAA", "CNAME"].includes(record.type))) {
-    warnings.push("DNS records already exist for CF_DOMAIN; verify compatibility before custom-domain attach.");
+  if (!(mcpDomain === zone.name || mcpDomain.endsWith("." + zone.name))) {
+    throw new Error("MCP_DOMAIN is not inside the active Cloudflare zone selected by CF_DOMAIN");
+  }
+  const dns = await cloudflare("/zones/" + zone.id + "/dns_records?name=" + encodeURIComponent(mcpDomain));
+  if (!dns.some(record => record.proxied === true && ["A", "AAAA", "CNAME"].includes(record.type))) {
+    throw new Error("MCP_DOMAIN must have an existing proxied A/AAAA/CNAME DNS record in Cloudflare");
   }
 
   if (serviceAccount) {
@@ -199,14 +211,14 @@ try {
     const { data, selectedPath } = await fetchRtdbAccounts(rtdbUrl);
     if (!hasEnabledAccounts(data)) {
       const rootKeys = await nodeChildNames(rtdbUrl, "/");
-      const envKeys = rootKeys.split(",").includes("env") ? await nodeChildNames(rtdbUrl, "/env") : "not-present";
+      const envKeys = rootKeys.split(",").includes("env") ? await nodeChildNames(rtdbUrl, "/env",) : "not-present";
       throw new Error("RTDB account node has no enabled direct account records (" + describeRtdbValue(data) + "). Database root child names: [" + rootKeys + "]; /env child names: [" + envKeys + "]. Expected /github_accounts or /env/github_accounts with child records containing token and enabled fields.");
     }
     enabledAccounts = Object.values(data).filter(account => account?.token && account.enabled !== false).length;
     console.log("[RTDB] Using account node " + selectedPath + ".");
   }
 
-  console.log("[PRE-FLIGHT CHECK PASSED] Cloudflare zone verified; RTDB mode=" + (mode || "legacy_auth_fallback") + "; enabled accounts=" + enabledAccounts + ". Secrets were not printed.");
+  console.log("[PRE-FLIGHT CHECK PASSED] Cloudflare zone and MCP hostname verified; RTDB mode=" + (mode || "legacy_auth_fallback") + "; enabled accounts=" + enabledAccounts + ". Secrets were not printed.");
   warnings.forEach(warning => console.warn("WARNING: " + warning));
 } catch (error) {
   console.error("[PRE-FLIGHT CHECK FAILED] " + (error instanceof Error ? error.message : "Live check failed") + "; credentials and RTDB values were redacted.");
