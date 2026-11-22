@@ -2,8 +2,7 @@ name: Deploy GitHub MCP Proxy
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'deployment-status.json'
+    paths-ignore: ['deployment-status.json']
   workflow_dispatch:
 permissions:
   contents: write
@@ -42,7 +41,7 @@ jobs:
         run: node scripts/validate-env.mjs
       - name: Install dependencies, typecheck and test
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run typecheck
           npm test
       - name: Prepare Cloudflare infrastructure
@@ -73,7 +72,7 @@ jobs:
           curl --fail --silent --show-error "https://$WORKER_DOMAIN/health" | tee /tmp/health.json
           grep -q '"status":"ok"' /tmp/health.json
           curl --fail --silent --show-error "https://$PUBLIC_DOMAIN/version" | tee /tmp/version.json
-          grep -Eq '"version":"v\.[0-9]{2}\.[0-9]{4}\.[0-9]{4}"' /tmp/version.json
+          grep -Eq '"version":"v\\.[0-9]{2}\\.[0-9]{4}\\.[0-9]{4}"' /tmp/version.json
           curl --fail --silent --show-error "https://$PUBLIC_DOMAIN/api" > /tmp/api.html && grep -q 'GitHub MCP' /tmp/api.html
           API_STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "https://$PUBLIC_DOMAIN/api/rpc" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
           test "$API_STATUS" = "401"
@@ -89,7 +88,7 @@ jobs:
           INIT=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":22,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"production-parity-smoke","version":"1"}}}')
           echo "$INIT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||!r.result?.protocolVersion||!r.result?.serverInfo?.name||r.result.serverInfo.name==="github-mcp-proxy")process.exit(1)})'
           TOOLS=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":23,"method":"tools/list","params":{}}')
-          echo "$TOOLS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const t=r.result?.tools||[];if(r.error||!t.length||!t.some(x=>x.name==="list_github_accounts")||!t.some(x=>x.name==="select_github_account")||t.some(x=>x.inputSchema?.properties?.account))process.exit(1);if(!t.some(x=>x.name==="get_me"))process.exit(1);console.log("Production MCP smoke passed: "+t.length+" tools including account list/switch and upstream GitHub tools")})'
+          echo "$TOOLS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const t=r.result?.tools||[];const names=t.map(x=>x.name);if(r.error||!t.length||!names.includes("list_github_accounts")||!names.includes("select_github_account")||!names.includes("list_github_secrets")||!names.includes("set_github_secret")||!names.includes("delete_github_secret")||t.some(x=>x.inputSchema?.properties?.account))process.exit(1);if(!names.includes("get_me"))process.exit(1);console.log("Production MCP smoke passed: "+t.length+" tools including GitHub account controls and Actions secrets tools")})'
       - name: Record deployment result
         if: always()
         env:
