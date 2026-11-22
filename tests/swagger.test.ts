@@ -16,14 +16,17 @@ function request(headers: Record<string, string> = {}) {
   });
 }
 
-describe("API Explorer", () => {
-  it("serves a no-store Swagger-style UI", async () => {
+describe("MCP Tool Dashboard", () => {
+  it("serves the account-aware dashboard without caching", async () => {
     const response = swaggerPage();
     const body = await response.text();
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(body).toContain("GitHub MCP Proxy");
+    expect(body).toContain("GitHub MCP");
     expect(body).toContain("/api/rpc");
+    expect(body).toContain("Tool catalog");
+    expect(body).toContain("Checklist dọn dữ liệu thử");
+    expect(body).toContain("data-ac");
   });
 
   it("rejects requests without all three credentials", async () => {
