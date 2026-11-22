@@ -2,12 +2,17 @@ import type { Env } from "./types";
 import { authenticateRequest } from "./auth/token-auth";
 import { handleStreamableHttp } from "./mcp/streamable-http";
 import { SseSessionDO } from "./mcp/sse-session-do";
-const cors={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET, POST, DELETE, OPTIONS","Access-Control-Allow-Headers":"Authorization, Content-Type, Accept, X-API-Key, X-GitHub-Account, Mcp-Session-Id, MCP-Protocol-Version","Access-Control-Expose-Headers":"Mcp-Session-Id"};
-function withCors(r:Response){const h=new Headers(r.headers);for(const [k,v] of Object.entries(cors))h.set(k,v);return new Response(r.body,{status:r.status,statusText:r.statusText,headers:h});}
+import { swaggerPage, handleApiRpc } from "./api/swagger";
+import { MCP_VERSION } from "./version";
+const cors={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET, POST, DELETE, OPTIONS","Access-Control-Allow-Headers":"Authorization, Content-Type, Accept, X-API-Key, X-GitHub-Account, Mcp-Session-Id, MCP-Protocol-Version, X-API-Passphrase, X-API-Client-Id, X-API-Client-Secret","Access-Control-Expose-Headers":"Mcp-Session-Id, X-MCP-Version"};
+function withCors(r:Response){const h=new Headers(r.headers);for(const [k,v] of Object.entries(cors))h.set(k,v);h.set("X-MCP-Version",MCP_VERSION);return new Response(r.body,{status:r.status,statusText:r.statusText,headers:h});}
 export default {async fetch(req:Request,env:Env):Promise<Response>{
  const u=new URL(req.url),path=u.pathname;
  if(req.method==="OPTIONS")return withCors(new Response(null,{status:204}));
- if(req.method==="GET"&&path==="/health")return withCors(Response.json({status:"ok",service:"github-mcp-proxy"}));
+ if(req.method==="GET"&&path==="/health")return withCors(Response.json({status:"ok",service:"github-mcp-proxy",version:MCP_VERSION}));
+ if(req.method==="GET"&&path==="/version")return withCors(Response.json({name:"github-mcp-proxy",version:MCP_VERSION,timezone:"Asia/Ho_Chi_Minh",format:"v.YY.MMDD.HHmm"}));
+ if(path==="/api"||path==="/api/"){if(req.method==="GET")return withCors(swaggerPage());return withCors(new Response("Method Not Allowed",{status:405}));}
+ if(path==="/api/rpc"){if(req.method!=="POST")return withCors(new Response("Method Not Allowed",{status:405}));return withCors(await handleApiRpc(req,env));}
  if(path.startsWith("/.well-known/")){
   const origin=env.PUBLIC_ORIGIN;
   if(path.includes("oauth-protected-resource"))return withCors(Response.json({resource:origin,authorization_servers:[origin],bearer_methods_supported:["header"],scopes_supported:["mcp:tools"]}));
