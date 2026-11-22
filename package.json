@@ -9,7 +9,7 @@
     "dev": "wrangler dev"
   },
   "dependencies": {
-    "libsodium-wrappers": "0.8.4"
+    "@byokit/seal": "0.3.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261121.1",

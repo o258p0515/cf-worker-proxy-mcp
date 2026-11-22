@@ -1,4 +1,14 @@
+import { sealBox } from "@byokit/seal";
+
 type SecretAction = "list_github_secrets" | "set_github_secret" | "delete_github_secret";
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + 0x8000, bytes.length)));
+  }
+  return btoa(binary);
+}
 const API_VERSION = "2022-11-28";
 
 function validateTarget(args: Record<string, unknown>) {
@@ -65,12 +75,10 @@ export async function runGitHubSecretTool(
   if (!value || value.length > 48000) throw new Error("value must be a non-empty string no longer than 48,000 characters.");
   const key = await githubRequest(token, base + "/public-key");
   if (typeof key?.key !== "string" || typeof key?.key_id !== "string") throw new Error("GitHub did not return a valid Actions public key.");
-  // libsodium initializes random/wasm facilities; defer module evaluation until
-  // inside the request handler because Workers disallow random/I/O at global scope.
-  const { default: sodium } = await import("libsodium-wrappers");
-  await sodium.ready;
-  const encrypted = sodium.crypto_box_seal(sodium.from_string(value), sodium.from_base64(key.key, sodium.base64_variants.ORIGINAL));
-  const encryptedValue = sodium.to_base64(encrypted, sodium.base64_variants.ORIGINAL);
+  // Pure-JS sealed-box implementation: no WebAssembly compilation is needed in Workers.
+  const publicKeyBytes = Uint8Array.from(atob(key.key), char => char.charCodeAt(0));
+  const encrypted = sealBox(new TextEncoder().encode(value), publicKeyBytes);
+  const encryptedValue = toBase64(encrypted);
   await githubRequest(token, base + "/" + encodeURIComponent(name), {
     method: "PUT",
     body: JSON.stringify({ encrypted_value: encryptedValue, key_id: key.key_id })
