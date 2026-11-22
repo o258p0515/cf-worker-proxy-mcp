@@ -1,111 +1,110 @@
-1	name: Deploy GitHub MCP Proxy
-    2	on:
-    3	  push:
-    4	    branches: [main]
-    5	    paths-ignore:
-    6	      - 'deployment-status.json'
-    7	  workflow_dispatch:
-    8	permissions:
-    9	  contents: write
-   10	concurrency:
-   11	  group: github-mcp-proxy-deploy
-   12	  cancel-in-progress: true
-   13	jobs:
-   14	  deploy:
-   15	    runs-on: ubuntu-latest
-   16	    timeout-minutes: 25
-   17	    env:
-   18	      MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
-   19	      MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
-   20	    steps:
-   21	      - uses: actions/checkout@v4
-   22	      - uses: actions/setup-node@v4
-   23	        with:
-   24	          node-version: 22
-   25	          cache: npm
-   26	          cache-dependency-path: package-lock.json
-   27	      - name: Generate Vietnam-time build version
-   28	        run: node scripts/generate-version.mjs
-   29	      - name: Pre-flight validate environment
-   30	        env:
-   31	          CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
-   32	          CF_API_KEY: ${{ secrets.CF_API_KEY }}
-   33	          CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
-   34	          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
-   35	          MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
-   36	          MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
-   37	          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
-   38	          FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
-   39	          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-   40	          RTDB_URL: ${{ secrets.RTDB_URL }}
-   41	          RTDB_AUTH_URL: ${{ secrets.RTDB_AUTH_URL }}
-   42	        run: node scripts/validate-env.mjs
-   43	      - name: Install dependencies, typecheck and test
-   44	        run: |
-   45	          npm ci
-   46	          npm run typecheck
-   47	          npm test
-   48	      - name: Prepare Cloudflare infrastructure
-   49	        env:
-   50	          CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
-   51	          CF_API_KEY: ${{ secrets.CF_API_KEY }}
-   52	          CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
-   53	        run: node scripts/prepare-deploy.mjs
-   54	      - name: Enforce configured MCP hostname
-   55	        run: test "$WORKER_DOMAIN" = "$MCP_DOMAIN" && test "$PUBLIC_DOMAIN" = "$MCP_DOMAIN"
-   56	      - name: Deploy Worker
-   57	        run: npx wrangler deploy --config wrangler.deploy.jsonc
-   58	      - name: Sync runtime secrets
-   59	        env:
-   60	          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
-   61	          MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
-   62	          MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
-   63	          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
-   64	          RTDB_URL: ${{ secrets.RTDB_URL }}
-   65	          RTDB_AUTH_URL: ${{ secrets.RTDB_AUTH_URL }}
-   66	          FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
-   67	          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-   68	        run: node scripts/sync-secrets.mjs | npx wrangler secret bulk --config wrangler.deploy.jsonc
-   69	      - name: Smoke test Worker endpoints and version
-   70	        run: |
-   71	          set -euo pipefail
-   72	          sleep 5
-   73	          curl --fail --silent --show-error "https://$WORKER_DOMAIN/health" | tee /tmp/health.json
-   74	          grep -q '"status":"ok"' /tmp/health.json
-   75	          curl --fail --silent --show-error "https://$PUBLIC_DOMAIN/version" | tee /tmp/version.json
-   76	          grep -Eq '"version":"v\.[0-9]{2}\.[0-9]{4}\.[0-9]{4}"' /tmp/version.json
-   77	          curl --fail --silent --show-error "https://$PUBLIC_DOMAIN/api" > /tmp/api.html && grep -q 'API Explorer' /tmp/api.html
-   78	          API_STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "https://$PUBLIC_DOMAIN/api/rpc" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
-   79	          test "$API_STATUS" = "401"
-   80	      - name: Smoke test OAuth metadata and MCP authentication
-   81	        env:
-   82	          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
-   83	        run: |
-   84	          set -euo pipefail
-   85	          META=$(curl --fail --silent --show-error "https://$WORKER_DOMAIN/.well-known/oauth-authorization-server")
-   86	          echo "$META" | grep -q '"registration_endpoint"'
-   87	          STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "https://$WORKER_DOMAIN/mcp" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}')
-   88	          test "$STATUS" = "401"
-   89	          INIT=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":22,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"production-parity-smoke","version":"1"}}}')
-   90	          echo "$INIT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||!r.result?.protocolVersion||!r.result?.serverInfo?.name||r.result.serverInfo.name==="github-mcp-proxy")process.exit(1)})'
-   91	          TOOLS=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":23,"method":"tools/list","params":{}}')
-   92	          echo "$TOOLS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const t=r.result?.tools||[];if(r.error||!t.length||t.some(x=>["list_github_accounts","refresh_accounts"].includes(x.name))||t.some(x=>x.inputSchema?.properties?.account))process.exit(1);if(!t.some(x=>x.name==="get_me"))process.exit(1);console.log("Production MCP parity smoke passed: "+t.length+" upstream tools")})'
-   93	      - name: Record deployment result
-   94	        if: always()
-   95	        env:
-   96	          DEPLOYED_SHA: ${{ github.sha }}
-   97	          RUN_ID: ${{ github.run_id }}
-   98	          JOB_STATUS: ${{ job.status }}
-   99	          BUILD_VERSION: ${{ env.MCP_VERSION }}
-  100	        run: |
-  101	          set -euo pipefail
-  102	          ENDPOINT="https://$MCP_DOMAIN/mcp"
-  103	          cat > deployment-status.json <<EOF_STATUS
-  104	          { "status": "$JOB_STATUS", "workflow_run_id": "$RUN_ID", "deployed_commit": "$DEPLOYED_SHA", "version": "$BUILD_VERSION", "endpoint": "$ENDPOINT" }
-  105	          EOF_STATUS
-  106	          git add -f deployment-status.json
-  107	          git config user.name "github-actions[bot]"
-  108	          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  109	          git commit -m "chore(deploy): record deployment result [skip ci]" || echo 'No deployment status changes to commit'
-  110	          git push origin HEAD:refs/heads/main
-  111
+name: Deploy GitHub MCP Proxy
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'deployment-status.json'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: github-mcp-proxy-deploy
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
+      MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Generate Vietnam-time build version
+        run: node scripts/generate-version.mjs
+      - name: Pre-flight validate environment
+        env:
+          CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
+          MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
+          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
+          FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          RTDB_URL: ${{ secrets.RTDB_URL }}
+          RTDB_AUTH_URL: ${{ secrets.RTDB_AUTH_URL }}
+        run: node scripts/validate-env.mjs
+      - name: Install dependencies, typecheck and test
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+      - name: Prepare Cloudflare infrastructure
+        env:
+          CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+        run: node scripts/prepare-deploy.mjs
+      - name: Enforce configured MCP hostname
+        run: test "$WORKER_DOMAIN" = "$MCP_DOMAIN" && test "$PUBLIC_DOMAIN" = "$MCP_DOMAIN"
+      - name: Deploy Worker
+        run: npx wrangler deploy --config wrangler.deploy.jsonc
+      - name: Sync runtime secrets
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
+          MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
+          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
+          RTDB_URL: ${{ secrets.RTDB_URL }}
+          RTDB_AUTH_URL: ${{ secrets.RTDB_AUTH_URL }}
+          FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/sync-secrets.mjs | npx wrangler secret bulk --config wrangler.deploy.jsonc
+      - name: Smoke test Worker endpoints and version
+        run: |
+          set -euo pipefail
+          sleep 5
+          curl --fail --silent --show-error "https://$WORKER_DOMAIN/health" | tee /tmp/health.json
+          grep -q '"status":"ok"' /tmp/health.json
+          curl --fail --silent --show-error "https://$PUBLIC_DOMAIN/version" | tee /tmp/version.json
+          grep -Eq '"version":"v\.[0-9]{2}\.[0-9]{4}\.[0-9]{4}"' /tmp/version.json
+          curl --fail --silent --show-error "https://$PUBLIC_DOMAIN/api" > /tmp/api.html && grep -q 'API Explorer' /tmp/api.html
+          API_STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "https://$PUBLIC_DOMAIN/api/rpc" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
+          test "$API_STATUS" = "401"
+      - name: Smoke test OAuth metadata and MCP authentication
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+        run: |
+          set -euo pipefail
+          META=$(curl --fail --silent --show-error "https://$WORKER_DOMAIN/.well-known/oauth-authorization-server")
+          echo "$META" | grep -q '"registration_endpoint"'
+          STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "https://$WORKER_DOMAIN/mcp" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}')
+          test "$STATUS" = "401"
+          INIT=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":22,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"production-parity-smoke","version":"1"}}}')
+          echo "$INIT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||!r.result?.protocolVersion||!r.result?.serverInfo?.name||r.result.serverInfo.name==="github-mcp-proxy")process.exit(1)})'
+          TOOLS=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":23,"method":"tools/list","params":{}}')
+          echo "$TOOLS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const t=r.result?.tools||[];if(r.error||!t.length||t.some(x=>["list_github_accounts","refresh_accounts"].includes(x.name))||t.some(x=>x.inputSchema?.properties?.account))process.exit(1);if(!t.some(x=>x.name==="get_me"))process.exit(1);console.log("Production MCP parity smoke passed: "+t.length+" upstream tools")})'
+      - name: Record deployment result
+        if: always()
+        env:
+          DEPLOYED_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          BUILD_VERSION: ${{ env.MCP_VERSION }}
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://$MCP_DOMAIN/mcp"
+          cat > deployment-status.json <<EOF_STATUS
+          { "status": "$JOB_STATUS", "workflow_run_id": "$RUN_ID", "deployed_commit": "$DEPLOYED_SHA", "version": "$BUILD_VERSION", "endpoint": "$ENDPOINT" }
+          EOF_STATUS
+          git add -f deployment-status.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(deploy): record deployment result [skip ci]" || echo 'No deployment status changes to commit'
+          git push origin HEAD:refs/heads/main
