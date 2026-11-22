@@ -34,8 +34,13 @@ async function githubRequest(token: string, path: string, init: RequestInit = {}
   let body: any = {};
   try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
   if (!response.ok) {
-    const message = typeof body.message === "string" ? body.message : "GitHub API request failed";
-    throw new Error("GitHub Actions Secrets API returned HTTP " + response.status + ": " + message);
+    const message = typeof body.message === "string" ? body.message : raw.trim().slice(0, 500) || "GitHub API request failed";
+    const requestId = response.headers.get("X-GitHub-Request-Id");
+    const permissions = response.headers.get("X-Accepted-GitHub-Permissions");
+    const details = ["GitHub Actions Secrets API " + path + " returned HTTP " + response.status + ": " + message];
+    if (permissions) details.push("required_permissions=" + permissions);
+    if (requestId) details.push("request_id=" + requestId);
+    throw new Error(details.join("; "));
   }
   return body;
 }
