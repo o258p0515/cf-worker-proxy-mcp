@@ -1,1 +1,1 @@
-{ "status": "failure", "workflow_run_id": "45016518794", "deployed_commit": "91d31bbae4d6b41589e48628b7e364e77254247d", "version": "v.26.1122.1816", "endpoint": "https://github-mcp-proxy.o258p0515.dpdns.org/mcp" }
+{ "status": "success", "workflow_run_id": "45016600081", "deployed_commit": "7785c1a23a7c4895af29b0b8ec172e96381fcaf0", "version": "v.26.1122.1817", "endpoint": "https://github-mcp-proxy.o258p0515.dpdns.org/mcp" }
