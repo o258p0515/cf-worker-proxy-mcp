@@ -16,7 +16,7 @@ Add the following Actions repository secrets in **Settings → Secrets and varia
 - `FIREBASE_SERVICE_ACCOUNT_JSON_B64` or `FIREBASE_SERVICE_ACCOUNT_JSON`
 - `RTDB_URL` when using a Service Account, or `RTDB_AUTH_URL` as fallback
 
-Workflows included: `.github/workflows/ci.yml` (tests/typecheck) and `.github/workflows/deploy.yml` (Cloudflare deploy + live MCP smoke tests). The deploy workflow runs on pushes to `main` and can also be started manually with **Actions → Deploy GitHub MCP Proxy → Run workflow**.
+Workflows included: `.github/workflows/ci.yml` (tests/typecheck) and `.github/workflows/deploy.yml` (Cloudflare deploy + live MCP smoke tests). The deploy workflow is manual-only (**Actions → Deploy GitHub MCP Proxy → Run workflow**) so it cannot accidentally deploy before this repository has its own Cloudflare and Firebase secrets configured.
 
 ## Architecture
 
