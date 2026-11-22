@@ -124,5 +124,5 @@ export async function resolveAccount(env: Env, alias: string) {
 
 export async function clearAccountCaches(env: Env) {
   memory = null;
-  await Promise.all(["rtdb:accounts:v1", "mcp:tools_catalog:v1"].map(key => env.CACHE_KV.delete(key)));
+  await Promise.all(["rtdb:accounts:v1", "mcp:tools_catalog:v1", "mcp:tools_catalog:v2", "mcp:tools_catalog:v3"].map(key => env.CACHE_KV.delete(key)));
 }

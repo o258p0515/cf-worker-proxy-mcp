@@ -1,6 +1,10 @@
 # Cloudflare GitHub MCP Proxy
 
-A Cloudflare Worker that proxies the official GitHub Remote MCP endpoint and selects a GitHub PAT from Firebase Realtime Database for each tool call. It supports Streamable HTTP (/mcp), legacy SSE (/sse and /messages), static token authentication, OAuth 2.1 authorization-code + PKCE, dynamic client registration, and encrypted RTDB caching.
+A Cloudflare Worker that transparently proxies the official GitHub Remote MCP endpoint and selects a GitHub PAT from Firebase Realtime Database for each request. Upstream tool names, descriptions, schemas, annotations, resources, prompts, initialization capabilities and results are forwarded without injecting proxy-specific fields into GitHub tool schemas. It supports Streamable HTTP (/mcp), legacy SSE (/sse and /messages), static token authentication, OAuth 2.1 authorization-code + PKCE, dynamic client registration, and encrypted RTDB caching.
+
+## Selecting a GitHub account
+
+Set the optional `X-GitHub-Account` HTTP header to an enabled alias from Firebase `/github_accounts` (for example, `personal`). If omitted, the configured `is_catalog_source` account is used, or the first enabled account. The legacy `account` argument is accepted as a routing hint for existing clients but is stripped before forwarding and is not added to official GitHub tool schemas. The account directory is exposed only to the protected API Explorer, not added to the official MCP tool catalog.
 
 ## Endpoints
 
