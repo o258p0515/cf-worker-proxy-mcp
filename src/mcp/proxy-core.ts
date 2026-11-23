@@ -4,6 +4,7 @@ import { callUpstream, clearUpstreamSessions } from "./upstream-client";
 import { getProxyCustomTools } from "./schema-injector";
 import { runGitHubSecretTool } from "./github-secrets";
 import { runLocalMcpTool } from "./localmcp";
+import { HUB_TOOL_PREFIX, callHubTool, checkHubConnection, getHubTools } from "./hub";
 import { auditLog } from "../utils/logger";
 
 const DASHBOARD_SUBJECT = "api-explorer";
@@ -75,7 +76,8 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
       if (upstream?.error) return upstream;
       const upstreamResult = upstream?.result || {};
       const tools = Array.isArray(upstreamResult.tools) ? upstreamResult.tools : [];
-      return result(msg.id, { ...upstreamResult, tools: [...tools, ...getProxyCustomTools(dashboard)] });
+      const hubTools = await getHubTools(account, ctx);
+      return result(msg.id, { ...upstreamResult, tools: [...tools, ...getProxyCustomTools(dashboard), ...hubTools] });
     }
     if (msg.method === "tools/call") {
       const name = String(p.name || "");
@@ -94,6 +96,17 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
       const { alias, account } = await selectAccount(env, ctx, requested, targetOwner);
       if (account.readonly && (WRITE_TOOL.test(name) || EXPLICITLY_MUTATING.has(name))) {
         return result(msg.id, textResult(`Account '${alias}' is read-only; this write operation is blocked.`, true));
+      }
+      if (name === "localmcp_hub_check_connection") {
+        const hubStatus = await checkHubConnection(account);
+        return hasId ? result(msg.id, textResult(hubStatus, !hubStatus.ready)) : null;
+      }
+      if (name.startsWith(HUB_TOOL_PREFIX)) {
+        if (account.readonly && name !== HUB_TOOL_PREFIX + "list_runners" && name !== HUB_TOOL_PREFIX + "get_job_result") {
+          return result(msg.id, textResult("Account is read-only; LocalMCP Hub tool execution is blocked.", true));
+        }
+        const hubResult = await callHubTool(name, args, account, ctx);
+        return result(msg.id, hubResult);
       }
       const start = Date.now();
       try {
