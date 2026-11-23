@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - .github/workflows/localmcp-production-smoke.yml
+      - .github/localmcp-smoke.trigger
   workflow_dispatch:
 
 permissions:

@@ -72,4 +72,23 @@ describe("LocalMCP Go lifecycle tools", () => {
     expect(calls.some(call => call.startsWith("PUT ") && call.includes("/actions/secrets/"))).toBe(false);
   });
 
+
+  it("checks LocalMCP Go with JSON-only MCP initialize instead of negotiating SSE", async () => {
+    let accept = "";
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
+      const url = String(input);
+      if (url.endsWith("/repos/octocat/localmcpcoder-go")) return Response.json({ default_branch: "main" });
+      if (url.endsWith("/health")) return Response.json({ status: "ok" });
+      if (url.endsWith("/mcp") && init.method === "POST") {
+        accept = new Headers(init.headers).get("Accept") || "";
+        return Response.json({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-03-26", serverInfo: { name: "localmcpcoder-go", version: "1.0.0" } } });
+      }
+      throw new Error("Unexpected request " + url);
+    }));
+    const configured = { ...account, localmcpgo_secrets: { CF_DOMAIN: "mcp.example.test", MCP_TOKEN: "localmcp-test-token" } };
+    const result = await runLocalMcpTool("localmcp_connection_check", {}, env, "personal", configured);
+    expect(result).toMatchObject({ ready: true, health_status: 200, mcp_http_status: 200, initialized: true });
+    expect(accept).toBe("application/json");
+  });
+
 });

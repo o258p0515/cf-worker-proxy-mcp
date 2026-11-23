@@ -2,7 +2,7 @@ name: Deploy GitHub MCP Proxy
 on:
   push:
     branches: [main]
-    paths-ignore: ['deployment-status.json']
+    paths-ignore: ['deployment-status.json', '.github/localmcp-smoke.trigger']
   workflow_dispatch:
 permissions:
   contents: write

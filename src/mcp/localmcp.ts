@@ -156,7 +156,7 @@ async function connectionCheck(configured: Record<string, string>) {
   const healthBody: any = await health.json().catch(() => ({}));
   const init = await fetch(base + "/mcp", {
     method: "POST",
-    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "github-mcp-proxy-localmcp-check", version: "1" } } }),
     signal: AbortSignal.timeout(15000)
   });
