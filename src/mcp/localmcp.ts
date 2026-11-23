@@ -216,13 +216,14 @@ export async function runLocalMcpTool(
   }
   if (name === "localmcp_start") {
     const workflow = await ensureWorkflow(account.token, t);
-    const missing = REQUIRED_SECRETS.filter(key => !configured[key]);
-    if (missing.length) throw new Error("RTDB account '" + alias + "' is missing required localmcpgo_secrets: " + missing.join(", ") + ". Configure them with localmcp_configure_secrets.");
     const existingRuns = await runs(account.token, t, 10);
     const active = existingRuns.find((run: any) => ["queued", "in_progress", "waiting", "requested"].includes(run.status));
     if (active) return { repository: t.owner + "/" + t.repo, already_running: true, workflow, run: runSummary(active) };
+    const existingSecrets = await secretNames(account.token, t.owner, t.repo);
+    const missingRequired = REQUIRED_SECRETS.filter(key => !existingSecrets.includes(key) && !configured[key]);
+    if (missingRequired.length) throw new Error("Required LocalMCP secrets are absent from GitHub and not configured in RTDB account '" + alias + "': " + missingRequired.join(", ") + ". Configure only these missing values with localmcp_configure_secrets.");
     const sync = await syncSecrets(account.token, t.owner, t.repo, configured, false);
-    if (sync.required_missing_from_rtdb.length) throw new Error("Required LocalMCP secrets are missing from RTDB.");
+    if (sync.missing_on_github_after_sync.length) throw new Error("GitHub still reports required secrets missing after synchronization: " + sync.missing_on_github_after_sync.join(", "));
     const started = await dispatch(account.token, t);
     return { repository: t.owner + "/" + t.repo, workflow, secrets: sync, ...started };
   }
@@ -253,9 +254,11 @@ export async function runLocalMcpTool(
     const stillActive = (await runs(account.token, t, 10)).some((item: any) => ["queued", "in_progress", "waiting", "requested"].includes(item.status));
     if (stillActive) throw new Error("Previous LocalMCP run has not stopped yet; refusing to start a concurrent runner.");
     const workflow = await ensureWorkflow(account.token, t);
-    const missing = REQUIRED_SECRETS.filter(key => !configured[key]);
-    if (missing.length) throw new Error("RTDB account '" + alias + "' is missing required localmcpgo_secrets: " + missing.join(", "));
+    const existingSecrets = await secretNames(account.token, t.owner, t.repo);
+    const missingRequired = REQUIRED_SECRETS.filter(key => !existingSecrets.includes(key) && !configured[key]);
+    if (missingRequired.length) throw new Error("Required LocalMCP secrets are absent from GitHub and not configured in RTDB account '" + alias + "': " + missingRequired.join(", "));
     const sync = await syncSecrets(account.token, t.owner, t.repo, configured, false);
+    if (sync.missing_on_github_after_sync.length) throw new Error("GitHub still reports required secrets missing after synchronization: " + sync.missing_on_github_after_sync.join(", "));
     return { repository: t.owner + "/" + t.repo, workflow, secrets: sync, ...(await dispatch(account.token, t)), restarted: true };
   }
   if (name === "localmcp_connection_check") {
