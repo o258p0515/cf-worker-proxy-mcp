@@ -49,7 +49,7 @@ describe("LocalMCP Go lifecycle tools", () => {
   });
 
   it("starts when required secrets already exist on GitHub even if RTDB omits one", async () => {
-    const required = ["CF_API_EMAIL", "CF_API_KEY", "CF_DOMAIN", "MCP_TOKEN", "MCP_OAUTH_CLIENT_ID", "MCP_OAUTH_CLIENT_SECRET", "MCP_OAUTH_REDIRECT_URIS"];
+    const required = ["CF_API_EMAIL", "CF_API_KEY", "CF_DOMAIN", "MCP_TOKEN", "MCP_OAUTH_CLIENT_ID", "MCP_OAUTH_CLIENT_SECRET"];
     const calls: string[] = [];
     let runChecks = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
