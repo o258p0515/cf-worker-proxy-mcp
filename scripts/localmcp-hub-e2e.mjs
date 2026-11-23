@@ -123,16 +123,21 @@ try {
 
   let proxyRegistrySnapshot = [];
   let publicRegistrySnapshot = [];
-  await waitFor(async () => {
-    [proxyRegistrySnapshot, publicRegistrySnapshot] = await Promise.all([
-      listRunners(),
-      listPublicHubRunners()
-    ]);
-    const hasBoth = (items) =>
-      items.some(r => r.runner_id === runnerA && r.status === "online") &&
-      items.some(r => r.runner_id === runnerB && r.status === "online");
-    return hasBoth(proxyRegistrySnapshot) && hasBoth(publicRegistrySnapshot);
-  }, "both runners to register in both Proxy and public Hub registries");
+  try {
+    await waitFor(async () => {
+      [proxyRegistrySnapshot, publicRegistrySnapshot] = await Promise.all([
+        listRunners(),
+        listPublicHubRunners()
+      ]);
+      const hasBoth = (items) =>
+        items.some(r => r.runner_id === runnerA && r.status === "online") &&
+        items.some(r => r.runner_id === runnerB && r.status === "online");
+      return hasBoth(proxyRegistrySnapshot) && hasBoth(publicRegistrySnapshot);
+    }, "both runners to register in both Proxy and public Hub registries");
+  } catch (error) {
+    throw new Error(String(error) + "; Proxy registry=" + JSON.stringify(proxyRegistrySnapshot) +
+      "; public Hub registry=" + JSON.stringify(publicRegistrySnapshot));
+  }
   console.log("Proxy and public Hub registries both report the two runners online.");
 
   const stableCatalog = parseText(await tool("localmcp_hub_tools"), "localmcp_hub_tools");
