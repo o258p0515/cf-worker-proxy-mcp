@@ -47,7 +47,7 @@ describe("separate LocalMCP Hub lifecycle controls", () => {
     await runLocalMcpHubControlTool("localmcp_hub_start", { runner_name: "fallback-token" }, { ...account, localmcpgo_secrets: { HUB_URLS: "https://hub.example.com" } }, "proxy-runtime-token-0123456789");
     const writes = secretTool.mock.calls.filter(call => call[0] === "set_github_secret");
     expect(writes.map(call => call[1].secret_name)).toEqual(["HUB_URLS", "MCP_TOKEN"]);
-    expect(writes[1][1].value).toBe("proxy-runtime-token-0123456789");
+    expect(writes[1]?.[1]?.value).toBe("proxy-runtime-token-0123456789");
   });
 
   it("refuses to start Hub runners if Hub URL is missing", async () => {
