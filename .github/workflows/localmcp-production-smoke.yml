@@ -1,0 +1,73 @@
+name: LocalMCP Go Production Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/localmcp-production-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  localmcp-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
+      MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+    steps:
+      - name: Start LocalMCP Go and verify production MCP handshake
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MCP_DOMAIN"
+          test -n "$MCP_TOKEN"
+          ENDPOINT="https://$MCP_DOMAIN/mcp"
+
+          call_tool() {
+            local id="$1"
+            local name="$2"
+            local args="$3"
+            curl --fail --silent --show-error -X POST "$ENDPOINT" \
+              -H "X-API-Key: $MCP_TOKEN" \
+              -H 'Content-Type: application/json' \
+              --data "{\"jsonrpc\":\"2.0\",\"id\":$id,\"method\":\"tools/call\",\"params\":{\"name\":\"$name\",\"arguments\":$args}}"
+          }
+
+          parse_tool() {
+            node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||r.result?.isError){console.error(JSON.stringify(r.error||r.result));process.exit(1)}const t=r.result?.content?.find(x=>x.type==="text")?.text;if(!t){console.error("MCP tool returned no text result");process.exit(1)}try{process.stdout.write(JSON.stringify(JSON.parse(t)))}catch(e){console.error("MCP tool returned invalid JSON text");process.exit(1)}})'
+          }
+
+          SELECT=$(call_tool 1 select_github_account '{"alias":"personal"}')
+          echo "$SELECT" | parse_tool | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);if(v.selected!=="personal")process.exit(1);console.log("Selected GitHub account: personal")})'
+
+          START=$(call_tool 2 localmcp_start '{}')
+          echo "$START" | parse_tool | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);if(!v.dispatched&&!v.already_running)process.exit(1);console.log("LocalMCP start accepted: "+JSON.stringify({dispatched:!!v.dispatched,already_running:!!v.already_running,run_id:v.run?.id||null,secret_write_count:v.secrets?.written_count??0}))})'
+
+          READY=0
+          for attempt in $(seq 1 48); do
+            CHECK=$(call_tool $((attempt+2)) localmcp_connection_check '{}')
+            SUMMARY=$(echo "$CHECK" | parse_tool | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);console.log(JSON.stringify({ready:!!v.ready,health_status:v.health_status??null,mcp_http_status:v.mcp_http_status??null,initialized:!!v.initialized}))})')
+            echo "LocalMCP connection attempt $attempt: $SUMMARY"
+            if echo "$CHECK" | parse_tool | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);process.exit(v.ready?0:1)})'; then
+              READY=1
+              break
+            fi
+            sleep 15
+          done
+
+          STATUS=$(call_tool 60 localmcp_status '{}')
+          echo "$STATUS" | parse_tool | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);console.log("LocalMCP workflow status: "+JSON.stringify({run:v.run?{id:v.run.id,status:v.run.status,conclusion:v.run.conclusion}:null,jobs:(v.jobs||[]).map(j=>({name:j.name,status:j.status,conclusion:j.conclusion,steps:(j.steps||[]).filter(x=>x.status!=="pending").map(x=>({name:x.name,status:x.status,conclusion:x.conclusion}))}))}))})'
+
+          if [ "$READY" -ne 1 ]; then
+            echo "::error::LocalMCP Go did not pass its authenticated MCP health check within 12 minutes."
+            exit 1
+          fi
+
+          RUNS=$(call_tool 61 localmcp_runs '{}')
+          echo "$RUNS" | parse_tool | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);console.log("Production LocalMCP runs tool passed; recent_runs="+(v.runs||[]).length)})'
+
+          LOGS=$(call_tool 62 localmcp_logs '{}')
+          echo "$LOGS" | parse_tool | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s);console.log("Production LocalMCP logs tool passed; jobs="+(v.jobs||[]).length+"; signed download URLs were not printed")})'
