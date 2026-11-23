@@ -64,6 +64,16 @@ describe("official GitHub MCP parity", () => {
     expect(response.result.tools.map((tool: any) => tool.name)).toContain("set_github_secret");
     expect(response.result.tools[0].inputSchema.properties.account).toBeUndefined();
   });
+  it("exposes a stable Hub call facade without adding runner-specific Hub tools to tools/list", async () => {
+    const env = makeEnv(); await clearAccountCaches(env);
+    vi.stubGlobal("fetch", upstreamFetch());
+    const response = await handleJsonRpcMessage({ jsonrpc: "2.0", id: 19, method: "tools/list", params: {} } as any, env, { method: "static_token", subject: "stable-hub-catalog" });
+    const names = response.result.tools.map((tool: any) => tool.name);
+    expect(names).toContain("localmcp_hub_tools");
+    expect(names).toContain("localmcp_hub_call");
+    expect(names).not.toContain("hub__bash");
+    expect(names).not.toContain("hub__list_runners");
+  });
   it("lists accounts and persists an agent-selected account", async () => {
     const env = makeEnv(); await clearAccountCaches(env); const calls: any[] = []; vi.stubGlobal("fetch", upstreamFetch(calls));
     const ctx = { method: "static_token", subject: "agent-session" } as any;

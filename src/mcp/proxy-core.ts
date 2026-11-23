@@ -79,8 +79,11 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
       if (upstream?.error) return upstream;
       const upstreamResult = upstream?.result || {};
       const tools = Array.isArray(upstreamResult.tools) ? upstreamResult.tools : [];
-      const hubTools = await getHubTools(account, ctx, env.MCP_TOKEN, env.LOCALMCP_HUB, env.LOCALMCP_HUB_ORIGIN);
-      return result(msg.id, { ...upstreamResult, tools: [...tools, ...getProxyCustomTools(dashboard), ...hubTools] });
+      // Hub is exposed through a stable Proxy facade only. The tool catalog must
+      // never change when runners connect/disconnect or when a session selects a runner.
+      // Runner-specific tool schemas are discoverable through localmcp_hub_tools and
+      // invoked through localmcp_hub_call with an optional runner_id.
+      return result(msg.id, { ...upstreamResult, tools: [...tools, ...getProxyCustomTools(dashboard)] });
     }
     if (msg.method === "tools/call") {
       const name = String(p.name || "");
