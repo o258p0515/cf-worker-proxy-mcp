@@ -16,4 +16,3 @@ describe("agent account and Actions secret controls", () => {
     expect(dashboardLocalMcp?.inputSchema?.properties?.account).toBeTruthy();
   });
 });
-   19

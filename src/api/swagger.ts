@@ -27,4 +27,3 @@ export async function handleApiRpc(req: Request, env: Env): Promise<Response> {
  const context:AuthContext={authenticated:true,method:"static_token",subject:"api-explorer"},response=await handleJsonRpcMessage(message,env,context);
  return Response.json(response??{jsonrpc:"2.0",id:message?.id??null,result:{}},{headers:{"Cache-Control":"no-store","X-MCP-Version":MCP_VERSION}});
 }
-   30

@@ -46,4 +46,3 @@ describe("LocalMCP Go lifecycle tools", () => {
     expect(calls.some(url => url.endsWith("/dispatches"))).toBe(false);
   });
 });
-   49

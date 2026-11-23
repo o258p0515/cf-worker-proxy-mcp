@@ -32,4 +32,3 @@ export function getProxyCustomTools(includeAdmin = false): McpTool[] {
   if (includeAdmin) tools.push({ name: "refresh_accounts", description: "Refresh account and upstream tool catalog caches for the protected API Explorer.", inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false } });
   return tools;
 }
-   35

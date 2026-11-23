@@ -113,4 +113,3 @@ export async function handleJsonRpcBatch(msgs: JsonRpc[], env: Env, ctx: AuthCon
   const out = await Promise.all(msgs.map(m => handleJsonRpcMessage(m, env, ctx)));
   return out.filter(Boolean);
 }
-  116

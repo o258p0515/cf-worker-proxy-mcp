@@ -284,4 +284,3 @@ export async function runLocalMcpTool(
   }
   throw new Error("Unsupported LocalMCP tool: " + name);
 }
-  287
