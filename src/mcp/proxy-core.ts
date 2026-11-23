@@ -5,14 +5,15 @@ import { getProxyCustomTools } from "./schema-injector";
 import { runGitHubSecretTool } from "./github-secrets";
 import { runLocalMcpTool } from "./localmcp";
 import { HUB_TOOL_PREFIX, callHubTool, checkHubConnection, getHubTools } from "./hub";
-import { runHubRunnerTool } from "./hub-runner";
+import { runLocalMcpHubControlTool } from "./localmcp-hub-control";
 import { auditLog } from "../utils/logger";
 
 const DASHBOARD_SUBJECT = "api-explorer";
 const WRITE_TOOL = /(?:^|_)(?:write|create|update|delete|push|merge|add|remove|fork|dismiss|submit|request|close|reopen|assign|cancel|rerun|enable|disable|set|put|patch)(?:_|$)/i;
-const EXPLICITLY_MUTATING = new Set(["run_secret_scanning", "actions_run_trigger", "set_github_secret", "delete_github_secret", "localmcp_configure_secrets", "localmcp_reset_secrets", "localmcp_check_workflow", "localmcp_start", "localmcp_stop", "localmcp_restart", "localmcp_hub_start", "localmcp_hub_stop", "localmcp_hub_check_workflow"]);
+const EXPLICITLY_MUTATING = new Set(["run_secret_scanning", "actions_run_trigger", "set_github_secret", "delete_github_secret", "localmcp_configure_secrets", "localmcp_reset_secrets", "localmcp_check_workflow", "localmcp_start", "localmcp_stop", "localmcp_restart", "localmcp_hub_start", "localmcp_hub_stop"]);
 const SECRET_TOOLS = new Set(["list_github_secrets", "set_github_secret", "delete_github_secret"]);
-const LOCALMCP_TOOLS = new Set(["localmcp_configure_secrets", "localmcp_check_secrets", "localmcp_reset_secrets", "localmcp_check_workflow", "localmcp_start", "localmcp_stop", "localmcp_restart", "localmcp_status", "localmcp_runs", "localmcp_logs", "localmcp_connection_check", "localmcp_hub_check_secrets", "localmcp_hub_check_workflow", "localmcp_hub_start", "localmcp_hub_stop", "localmcp_hub_status", "localmcp_hub_runs"]);
+const LOCALMCP_TOOLS = new Set(["localmcp_configure_secrets", "localmcp_check_secrets", "localmcp_reset_secrets", "localmcp_check_workflow", "localmcp_start", "localmcp_stop", "localmcp_restart", "localmcp_status", "localmcp_runs", "localmcp_logs", "localmcp_connection_check"]);
+const LOCALMCP_HUB_CONTROL_TOOLS = new Set(["localmcp_hub_check_secrets", "localmcp_hub_start", "localmcp_hub_runs", "localmcp_hub_status", "localmcp_hub_stop"]);
 
 function result(id: JsonRpc["id"], value: unknown) { return { jsonrpc: "2.0", id, result: value }; }
 function error(id: JsonRpc["id"], code: number, message: string) { return { jsonrpc: "2.0", id, error: { code, message } }; }
@@ -98,9 +99,9 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
       if (account.readonly && (WRITE_TOOL.test(name) || EXPLICITLY_MUTATING.has(name))) {
         return result(msg.id, textResult(`Account '${alias}' is read-only; this write operation is blocked.`, true));
       }
-      if (name.startsWith("localmcp_hub_") && name !== "localmcp_hub_check_connection") {
-        const hubWorkflowResult = await runHubRunnerTool(name, args, account);
-        return hasId ? result(msg.id, textResult(hubWorkflowResult)) : null;
+      if (LOCALMCP_HUB_CONTROL_TOOLS.has(name)) {
+        const hubControl = await runLocalMcpHubControlTool(name, args, account);
+        return hasId ? result(msg.id, textResult(hubControl)) : null;
       }
       if (name === "localmcp_hub_check_connection") {
         const hubStatus = await checkHubConnection(account);

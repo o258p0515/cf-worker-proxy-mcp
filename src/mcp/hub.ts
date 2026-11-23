@@ -19,7 +19,7 @@ function validateHubUrl(value: string): string {
   return url.toString().replace(/\/+$/, "");
 }
 async function sessionId(ctx: AuthContext): Promise<string> {
-  const source = new TextEncoder().encode("localmcp-hub:" + ctx.method + ":" + ctx.subject);
+  const source = new TextEncoder().encode("localmcp-hub:" + ctx.method + ":" + (ctx.sessionId || ctx.subject));
   const digest = await crypto.subtle.digest("SHA-256", source);
   return Array.from(new Uint8Array(digest)).map(value => value.toString(16).padStart(2, "0")).join("").slice(0, 40);
 }
