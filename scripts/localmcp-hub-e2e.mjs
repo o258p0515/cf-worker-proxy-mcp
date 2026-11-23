@@ -1,7 +1,19 @@
+import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
 let rawDomain = String(process.env.MCP_DOMAIN ?? "").trim();
 rawDomain = rawDomain.replace("https://", "").replace("http://", "").split("/")[0].split("?")[0].split("#")[0];
 if (!rawDomain) throw new Error("MCP_DOMAIN is missing.");
 const base = "https://" + rawDomain;
+// Compare the registry reached by the Proxy with the public Hub registry.
+// A mismatch proves that runners and the Proxy are talking to different Hub deployments.
+const wranglerConfig = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
+const configuredHubOrigin = process.env.HUB_ORIGIN || wranglerConfig.match(/"LOCALMCP_HUB_ORIGIN"\\s*:\\s*"([^"]+)"/)?.[1];
+if (!configuredHubOrigin) throw new Error("LOCALMCP_HUB_ORIGIN is missing from wrangler.jsonc.");
+const hubOrigin = new URL(configuredHubOrigin).origin;
+const hubDomain = new URL(hubOrigin).host;
+const adminToken = createHmac("sha256", String(process.env.MCP_TOKEN))
+  .update("localmcp-hub-admin-v1:" + hubDomain)
+  .digest("hex");
 const token = process.env.MCP_TOKEN;
 if (!token || token.length < 16) throw new Error("MCP_TOKEN is missing or too short.");
 const session = "proxy-hub-e2e-" + crypto.randomUUID();
@@ -45,6 +57,16 @@ async function tool(name, args = {}) {
 async function listRunners() {
   const result = await tool("localmcp_hub_call", { tool_name: "list_runners", arguments: {} });
   return parseText(result, "localmcp_hub_call list_runners").runners ?? [];
+}
+async function listPublicHubRunners() {
+  const response = await fetch(hubOrigin + "/admin/runners", {
+    headers: { Authorization: "Bearer " + adminToken, Accept: "application/json" },
+    signal: AbortSignal.timeout(10000)
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error("Public Hub admin registry returned HTTP " + response.status + ".");
+  try { return JSON.parse(body); }
+  catch { throw new Error("Public Hub admin registry returned invalid JSON."); }
 }
 async function waitFor(predicate, label, attempts = 60, delay = 3000) {
   for (let i = 0; i < attempts; i++) {
@@ -99,12 +121,19 @@ try {
   runnerB = "proxy-e2e-b-" + runB;
   console.log("Dispatched runner B; run ID " + runB + ".");
 
+  let proxyRegistrySnapshot = [];
+  let publicRegistrySnapshot = [];
   await waitFor(async () => {
-    const runners = await listRunners();
-    return runners.some(r => r.runner_id === runnerA && r.status === "online") &&
-      runners.some(r => r.runner_id === runnerB && r.status === "online");
-  }, "both runners to register online");
-  console.log("Hub Registry reports both runners online.");
+    [proxyRegistrySnapshot, publicRegistrySnapshot] = await Promise.all([
+      listRunners(),
+      listPublicHubRunners()
+    ]);
+    const hasBoth = (items) =>
+      items.some(r => r.runner_id === runnerA && r.status === "online") &&
+      items.some(r => r.runner_id === runnerB && r.status === "online");
+    return hasBoth(proxyRegistrySnapshot) && hasBoth(publicRegistrySnapshot);
+  }, "both runners to register in both Proxy and public Hub registries");
+  console.log("Proxy and public Hub registries both report the two runners online.");
 
   const stableCatalog = parseText(await tool("localmcp_hub_tools"), "localmcp_hub_tools");
   if (!(stableCatalog.tools ?? []).some(item => item.name === "hub__bash")) throw new Error("Stable Hub catalog did not return the runner bash tool.");
