@@ -53,6 +53,24 @@ async function waitFor(predicate, label, attempts = 60, delay = 3000) {
   }
   throw new Error("Timed out waiting for " + label);
 }
+async function startRunner(name) {
+  const requestedAt = Date.now();
+  const result = parseText(await tool("localmcp_hub_start", {
+    runner_name: name, runner_tags: "linux,go,gha,proxy-e2e", duration_seconds: 900
+  }), "localmcp_hub_start " + name);
+  let runId = result.run?.id ?? null;
+  if (!runId) {
+    const run = await waitFor(async () => {
+      const data = parseText(await tool("localmcp_hub_runs"), "localmcp_hub_runs");
+      return (data.runs ?? []).find(item =>
+        Date.parse(item.created_at || "") >= requestedAt - 15000 &&
+        ["queued", "in_progress", "waiting", "requested"].includes(item.status)
+      ) ?? null;
+    }, "GitHub Actions run ID for " + name, 30, 2000);
+    runId = run.id;
+  }
+  return Number(runId);
+}
 async function stop(runId) {
   if (!runId) return;
   try { await tool("localmcp_hub_stop", { run_id: Number(runId) }); } catch (error) {
@@ -71,19 +89,11 @@ try {
   if (!connection.ready) throw new Error("Proxy cannot authenticate to Hub with the shared MCP_TOKEN: " + JSON.stringify(connection));
   console.log("Proxy-to-Hub authenticated connection passed.");
 
-  const startA = parseText(await tool("localmcp_hub_start", {
-    runner_name: "proxy-e2e-a", runner_tags: "linux,go,gha,proxy-e2e", duration_seconds: 900
-  }), "localmcp_hub_start A");
-  runA = startA.run?.id ?? null;
-  if (!runA) throw new Error("Hub runner A was dispatched but its GitHub Actions run ID was not returned.");
+  runA = await startRunner("proxy-e2e-a");
   runnerA = "proxy-e2e-a-" + runA;
   console.log("Dispatched runner A; run ID " + runA + ".");
 
-  const startB = parseText(await tool("localmcp_hub_start", {
-    runner_name: "proxy-e2e-b", runner_tags: "linux,go,gha,proxy-e2e", duration_seconds: 900
-  }), "localmcp_hub_start B");
-  runB = startB.run?.id ?? null;
-  if (!runB) throw new Error("Hub runner B was dispatched but its GitHub Actions run ID was not returned.");
+  runB = await startRunner("proxy-e2e-b");
   runnerB = "proxy-e2e-b-" + runB;
   console.log("Dispatched runner B; run ID " + runB + ".");
 
