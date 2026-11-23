@@ -62,6 +62,21 @@ describe("isolated LocalMCP Hub proxy layer", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("uses the Cloudflare service binding for the same-account Hub origin", async () => {
+    const serviceFetch = vi.fn(async (request: Request) => {
+      expect(new URL(request.url).pathname).toBe("/mcp");
+      const rpc = await request.json() as any;
+      return Response.json({ jsonrpc: "2.0", id: rpc.id, result: { tools: [{ name: "bash", inputSchema: { type: "object", properties: {} } }] } });
+    });
+    const publicFetch = vi.fn();
+    vi.stubGlobal("fetch", publicFetch);
+    const service = { fetch: serviceFetch } as any;
+    const tools = await getHubTools(account, ctx, "", service, "https://hub.example.com");
+    expect(tools.map(tool => tool.name)).toEqual([HUB_TOOL_PREFIX + "bash"]);
+    expect(serviceFetch).toHaveBeenCalledTimes(1);
+    expect(publicFetch).not.toHaveBeenCalled();
+  });
+
   it("does not expose Hub tools when no Hub URL is configured", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);

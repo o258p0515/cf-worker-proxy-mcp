@@ -78,7 +78,7 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
       if (upstream?.error) return upstream;
       const upstreamResult = upstream?.result || {};
       const tools = Array.isArray(upstreamResult.tools) ? upstreamResult.tools : [];
-      const hubTools = await getHubTools(account, ctx, env.MCP_TOKEN);
+      const hubTools = await getHubTools(account, ctx, env.MCP_TOKEN, env.LOCALMCP_HUB, env.LOCALMCP_HUB_ORIGIN);
       return result(msg.id, { ...upstreamResult, tools: [...tools, ...getProxyCustomTools(dashboard), ...hubTools] });
     }
     if (msg.method === "tools/call") {
@@ -104,14 +104,14 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
         return hasId ? result(msg.id, textResult(hubControl)) : null;
       }
       if (name === "localmcp_hub_check_connection") {
-        const hubStatus = await checkHubConnection(account, env.MCP_TOKEN);
+        const hubStatus = await checkHubConnection(account, env.MCP_TOKEN, env.LOCALMCP_HUB, env.LOCALMCP_HUB_ORIGIN);
         return hasId ? result(msg.id, textResult(hubStatus, !hubStatus.ready)) : null;
       }
       if (name.startsWith(HUB_TOOL_PREFIX)) {
         if (account.readonly && name !== HUB_TOOL_PREFIX + "list_runners" && name !== HUB_TOOL_PREFIX + "get_job_result") {
           return result(msg.id, textResult("Account is read-only; LocalMCP Hub tool execution is blocked.", true));
         }
-        const hubResult = await callHubTool(name, args, account, ctx, env.MCP_TOKEN);
+        const hubResult = await callHubTool(name, args, account, ctx, env.MCP_TOKEN, env.LOCALMCP_HUB, env.LOCALMCP_HUB_ORIGIN);
         return result(msg.id, hubResult);
       }
       const start = Date.now();

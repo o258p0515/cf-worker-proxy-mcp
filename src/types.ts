@@ -11,6 +11,7 @@ export interface Env {
   PUBLIC_ORIGIN: string; GITHUB_MCP_UPSTREAM_URL?: string; GITHUB_MCP_TOOLSETS?: string;
   RTDB_CACHE_TTL_SECONDS?: string; OAUTH_KV: KVNamespace; CACHE_KV: KVNamespace;
   SSE_SESSIONS: DurableObjectNamespace;
+  LOCALMCP_HUB?: Fetcher; LOCALMCP_HUB_ORIGIN?: string;
 }
 export interface AuthContext { authenticated?: boolean; method: "static_token" | "oauth"; subject: string; sessionId?: string; pinnedAccount?: string }
 export interface McpTool { name: string; description?: string; inputSchema?: { type?: string; properties?: Record<string, unknown>; required?: string[]; [key:string]: unknown }; [key:string]: unknown }

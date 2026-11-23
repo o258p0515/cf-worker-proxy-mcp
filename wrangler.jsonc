@@ -10,8 +10,12 @@
     "PUBLIC_ORIGIN": "https://__PUBLIC_DOMAIN__",
     "GITHUB_MCP_UPSTREAM_URL": "https://api.githubcopilot.com/mcp/",
     "GITHUB_MCP_TOOLSETS": "all",
-    "RTDB_CACHE_TTL_SECONDS": "300"
+    "RTDB_CACHE_TTL_SECONDS": "300",
+    "LOCALMCP_HUB_ORIGIN": "https://hub.o258p0515.dpdns.org"
   },
+  "services": [
+    { "binding": "LOCALMCP_HUB", "service": "localmcp-hub" }
+  ],
   "kv_namespaces": [
     { "binding": "OAUTH_KV", "id": "__OAUTH_KV_ID__" },
     { "binding": "CACHE_KV", "id": "__CACHE_KV_ID__" }

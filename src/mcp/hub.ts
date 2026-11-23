@@ -31,13 +31,19 @@ function hubConfig(account: RtdbAccount, fallbackToken = "") {
   if (!urls.length) throw new Error("HUB_URLS is missing from RTDB localmcpgo_secrets.");
   return { token, urls };
 }
-async function requestHub(base: string, token: string, session: string, rpc: Record<string, unknown>): Promise<any> {
-  const response = await fetch(base + "/mcp", {
+async function hubFetch(base: string, path: string, init: RequestInit, service?: Fetcher, serviceOrigin?: string): Promise<Response> {
+  if (service && serviceOrigin && new URL(base).origin === new URL(serviceOrigin).origin) {
+    return service.fetch(new Request(base + path, init));
+  }
+  return fetch(base + path, init);
+}
+async function requestHub(base: string, token: string, session: string, rpc: Record<string, unknown>, service?: Fetcher, serviceOrigin?: string): Promise<any> {
+  const response = await hubFetch(base, "/mcp", {
     method: "POST",
     headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json", "Mcp-Session-Id": session },
     body: JSON.stringify({ jsonrpc: "2.0", ...rpc }),
     signal: AbortSignal.timeout(55_000)
-  });
+  }, service, serviceOrigin);
   const body = await response.text();
   let parsed: any = {};
   try { parsed = body ? JSON.parse(body) : {}; } catch { throw new Error("Hub " + base + " returned non-JSON HTTP " + response.status + "."); }
@@ -45,42 +51,42 @@ async function requestHub(base: string, token: string, session: string, rpc: Rec
   if (parsed.error) throw new Error(String(parsed.error.message || "Hub MCP request failed"));
   return parsed.result ?? {};
 }
-export async function getHubTools(account: RtdbAccount, ctx: AuthContext, fallbackToken = ""): Promise<McpTool[]> {
+export async function getHubTools(account: RtdbAccount, ctx: AuthContext, fallbackToken = "", service?: Fetcher, serviceOrigin?: string): Promise<McpTool[]> {
   let configured: ReturnType<typeof hubConfig>;
   try { configured = hubConfig(account, fallbackToken); } catch { return []; }
   const fallback = HUB_META_TOOLS.map(tool => ({ ...tool, name: HUB_TOOL_PREFIX + tool.name, description: "LocalMCP Hub: " + tool.description }));
   const session = await sessionId(ctx);
   for (const base of configured.urls) {
     try {
-      const result = await requestHub(base, configured.token, session, { id: "proxy-hub-tools-list", method: "tools/list", params: {} });
+      const result = await requestHub(base, configured.token, session, { id: "proxy-hub-tools-list", method: "tools/list", params: {} }, service, serviceOrigin);
       const tools = Array.isArray(result.tools) ? result.tools as McpTool[] : [];
       return (tools.length ? tools : HUB_META_TOOLS).map(tool => ({ ...tool, name: HUB_TOOL_PREFIX + tool.name, description: "LocalMCP Hub: " + String(tool.description || tool.name) }));
     } catch { /* Try the next configured Hub URL. */ }
   }
   return fallback;
 }
-export async function callHubTool(name: string, args: Record<string, unknown>, account: RtdbAccount, ctx: AuthContext, fallbackToken = "") {
+export async function callHubTool(name: string, args: Record<string, unknown>, account: RtdbAccount, ctx: AuthContext, fallbackToken = "", service?: Fetcher, serviceOrigin?: string) {
   const toolName = name.startsWith(HUB_TOOL_PREFIX) ? name.slice(HUB_TOOL_PREFIX.length) : name;
   if (!toolName || !/^[A-Za-z0-9_.-]{1,128}$/.test(toolName)) throw new Error("Invalid LocalMCP Hub tool name.");
   const { token, urls } = hubConfig(account, fallbackToken);
   const session = await sessionId(ctx);
   const failures: string[] = [];
   for (const base of urls) {
-    try { return await requestHub(base, token, session, { id: "proxy-hub-call-" + crypto.randomUUID(), method: "tools/call", params: { name: toolName, arguments: args } }); }
+    try { return await requestHub(base, token, session, { id: "proxy-hub-call-" + crypto.randomUUID(), method: "tools/call", params: { name: toolName, arguments: args } }, service, serviceOrigin); }
     catch (error) { failures.push(error instanceof Error ? error.message : String(error)); }
   }
   throw new Error("Unable to reach any configured LocalMCP Hub. " + failures.join(" | "));
 }
-export async function checkHubConnection(account: RtdbAccount, fallbackToken = "") {
+export async function checkHubConnection(account: RtdbAccount, fallbackToken = "", service?: Fetcher, serviceOrigin?: string) {
   let configured: ReturnType<typeof hubConfig>;
   try { configured = hubConfig(account, fallbackToken); } catch (error) { return { ready: false, reason: error instanceof Error ? error.message : String(error) }; }
   const checks: Array<Record<string, unknown>> = [];
   for (const base of configured.urls) {
     try {
-      const health = await fetch(base + "/health", { signal: AbortSignal.timeout(10_000) });
+      const health = await hubFetch(base, "/health", { signal: AbortSignal.timeout(10_000) }, service, serviceOrigin);
       const healthBody: any = await health.json().catch(() => ({}));
       if (!health.ok || healthBody.status !== "ok") { checks.push({ hub: base, ready: false, health_status: health.status, health_body: healthBody }); continue; }
-      const initialized = await requestHub(base, configured.token, "proxy-health-check", { id: "proxy-hub-initialize", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "github-mcp-proxy", version: "1" } } });
+      const initialized = await requestHub(base, configured.token, "proxy-health-check", { id: "proxy-hub-initialize", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "github-mcp-proxy", version: "1" } } }, service, serviceOrigin);
       checks.push({ hub: base, ready: !!initialized.serverInfo, health_status: health.status, server_info: initialized.serverInfo ?? null });
     } catch (error) { checks.push({ hub: base, ready: false, reason: error instanceof Error ? error.message : String(error) }); }
   }
