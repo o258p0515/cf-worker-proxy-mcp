@@ -77,6 +77,11 @@ describe("isolated LocalMCP Hub proxy layer", () => {
     expect(publicFetch).not.toHaveBeenCalled();
   });
 
+  it("returns stable Hub meta-tools when configuration is missing instead of silently hiding the entire Hub catalog", async () => {
+    const tools = await getHubTools({ ...account, localmcpgo_secrets: { MCP_TOKEN: "mcp-token-shared-0123456789abcdef" } }, ctx);
+    expect(tools.map(tool => tool.name)).toEqual(["hub__list_runners", "hub__select_runner", "hub__get_job_result"]);
+  });
+
   it("does not expose Hub tools when no Hub URL is configured", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);

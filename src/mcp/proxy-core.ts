@@ -14,6 +14,7 @@ const EXPLICITLY_MUTATING = new Set(["run_secret_scanning", "actions_run_trigger
 const SECRET_TOOLS = new Set(["list_github_secrets", "set_github_secret", "delete_github_secret"]);
 const LOCALMCP_TOOLS = new Set(["localmcp_configure_secrets", "localmcp_check_secrets", "localmcp_reset_secrets", "localmcp_check_workflow", "localmcp_start", "localmcp_stop", "localmcp_restart", "localmcp_status", "localmcp_runs", "localmcp_logs", "localmcp_connection_check"]);
 const LOCALMCP_HUB_CONTROL_TOOLS = new Set(["localmcp_hub_check_secrets", "localmcp_hub_start", "localmcp_hub_runs", "localmcp_hub_status", "localmcp_hub_stop"]);
+const LOCALMCP_HUB_FACADE_TOOLS = new Set(["localmcp_hub_tools", "localmcp_hub_call"]);
 
 function result(id: JsonRpc["id"], value: unknown) { return { jsonrpc: "2.0", id, result: value }; }
 function error(id: JsonRpc["id"], code: number, message: string) { return { jsonrpc: "2.0", id, error: { code, message } }; }
@@ -100,12 +101,25 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
         return result(msg.id, textResult(`Account '${alias}' is read-only; this write operation is blocked.`, true));
       }
       if (LOCALMCP_HUB_CONTROL_TOOLS.has(name)) {
-        const hubControl = await runLocalMcpHubControlTool(name, args, account);
+        const hubControl = await runLocalMcpHubControlTool(name, args, account, env.MCP_TOKEN);
         return hasId ? result(msg.id, textResult(hubControl)) : null;
       }
       if (name === "localmcp_hub_check_connection") {
         const hubStatus = await checkHubConnection(account, env.MCP_TOKEN, env.LOCALMCP_HUB, env.LOCALMCP_HUB_ORIGIN);
         return hasId ? result(msg.id, textResult(hubStatus, !hubStatus.ready)) : null;
+      }
+      if (name === "localmcp_hub_tools") {
+        const catalog = await getHubTools(account, ctx, env.MCP_TOKEN, env.LOCALMCP_HUB, env.LOCALMCP_HUB_ORIGIN);
+        return hasId ? result(msg.id, textResult({ tools: catalog, invocation: "Call localmcp_hub_call with tool_name (without hub__ prefix), arguments, and optional runner_id." })) : null;
+      }
+      if (name === "localmcp_hub_call") {
+        const toolName = typeof args.tool_name === "string" ? args.tool_name.trim() : "";
+        if (!toolName) throw new Error("tool_name is required; call localmcp_hub_tools to inspect the Hub catalog.");
+        const callArgs = args.arguments && typeof args.arguments === "object" && !Array.isArray(args.arguments) ? { ...(args.arguments as Record<string, unknown>) } : {};
+        if (typeof args.runner_id === "string" && args.runner_id.trim()) callArgs.runner_id = args.runner_id.trim();
+        if (account.readonly && !["list_runners", "get_job_result"].includes(toolName)) return result(msg.id, textResult("Account is read-only; this LocalMCP Hub tool execution is blocked.", true));
+        const hubResult = await callHubTool(HUB_TOOL_PREFIX + toolName, callArgs, account, ctx, env.MCP_TOKEN, env.LOCALMCP_HUB, env.LOCALMCP_HUB_ORIGIN);
+        return hasId ? result(msg.id, textResult(hubResult)) : null;
       }
       if (name.startsWith(HUB_TOOL_PREFIX)) {
         if (account.readonly && name !== HUB_TOOL_PREFIX + "list_runners" && name !== HUB_TOOL_PREFIX + "get_job_result") {

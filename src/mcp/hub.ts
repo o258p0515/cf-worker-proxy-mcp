@@ -53,7 +53,7 @@ async function requestHub(base: string, token: string, session: string, rpc: Rec
 }
 export async function getHubTools(account: RtdbAccount, ctx: AuthContext, fallbackToken = "", service?: Fetcher, serviceOrigin?: string): Promise<McpTool[]> {
   let configured: ReturnType<typeof hubConfig>;
-  try { configured = hubConfig(account, fallbackToken); } catch { return []; }
+  try { configured = hubConfig(account, fallbackToken); } catch { return HUB_META_TOOLS.map(tool => ({ ...tool, name: HUB_TOOL_PREFIX + tool.name, description: "LocalMCP Hub: " + tool.description })); }
   const fallback = HUB_META_TOOLS.map(tool => ({ ...tool, name: HUB_TOOL_PREFIX + tool.name, description: "LocalMCP Hub: " + tool.description }));
   const session = await sessionId(ctx);
   for (const base of configured.urls) {

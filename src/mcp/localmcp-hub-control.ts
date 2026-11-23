@@ -4,7 +4,7 @@ import { runGitHubSecretTool } from "./github-secrets";
 const WORKFLOW = "hub-runner.yml";
 const API_VERSION = "2022-11-28";
 
-function configured(account: RtdbAccount) {
+function configured(account: RtdbAccount, fallbackToken = "") {
   const secrets = account.localmcpgo_secrets || {};
   const urls = String(secrets.HUB_URLS || "").split(",").map(value => value.trim()).filter(Boolean);
   if (!urls.length) throw new Error("HUB_URLS is missing from RTDB localmcpgo_secrets.");
@@ -14,7 +14,9 @@ function configured(account: RtdbAccount) {
     if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) throw new Error("HUB_URLS must contain HTTPS Hub base URLs.");
     if (url.username || url.password || url.search || url.hash) throw new Error("HUB_URLS must contain clean base URLs.");
   }
-  return { HUB_URLS: urls.join(",") };
+  const token = String(secrets.MCP_TOKEN || fallbackToken || "").trim();
+  if (token.length < 16) throw new Error("MCP_TOKEN is missing or too short in RTDB localmcpgo_secrets and Proxy fallback. The Hub and runner must use the same MCP_TOKEN.");
+  return { HUB_URLS: urls.join(","), MCP_TOKEN: token };
 }
 function target(args: Record<string, unknown>, account: RtdbAccount) {
   const owner = typeof args.owner === "string" && args.owner.trim() ? args.owner.trim() : account.username;
@@ -47,18 +49,19 @@ function summary(run: any) {
   return { id: run.id, status: run.status, conclusion: run.conclusion, created_at: run.created_at, updated_at: run.updated_at, html_url: run.html_url, head_branch: run.head_branch, run_number: run.run_number };
 }
 
-export async function runLocalMcpHubControlTool(name: string, args: Record<string, unknown>, account: RtdbAccount) {
+export async function runLocalMcpHubControlTool(name: string, args: Record<string, unknown>, account: RtdbAccount, fallbackToken = "") {
   const repo = target(args, account);
   const path = "/repos/" + repo.owner + "/" + repo.repo;
   if (name === "localmcp_hub_check_secrets") {
-    const configuredSecrets = configured(account);
+    const configuredSecrets = configured(account, fallbackToken);
     const result = await runGitHubSecretTool("list_github_secrets", repo, account.token);
     const existing = Array.isArray(result.secrets) ? result.secrets.map((item: any) => String(item.name)) : [];
     const required = ["HUB_URLS", "MCP_TOKEN"];
-    return { repository: repo.owner + "/" + repo.repo, configured_names: Object.keys(configuredSecrets), github_names: existing, missing_on_github: required.filter(key => !existing.includes(key)), values_returned: false };
+    const missingInRtdb = required.filter(key => !configuredSecrets[key as keyof typeof configuredSecrets]);
+    return { repository: repo.owner + "/" + repo.repo, configured_names: Object.keys(configuredSecrets), github_names: existing, missing_in_rtdb: missingInRtdb, missing_on_github: required.filter(key => !existing.includes(key)), sync_required: required.filter(key => !existing.includes(key)), values_returned: false, note: "GitHub does not reveal stored secret values; localmcp_hub_start always rewrites both shared secrets from the selected RTDB account before dispatch." };
   }
   if (name === "localmcp_hub_start") {
-    const values = configured(account);
+    const values = configured(account, fallbackToken);
     const runnerName = typeof args.runner_name === "string" && args.runner_name.trim() ? args.runner_name.trim() : "gha";
     const runnerTags = typeof args.runner_tags === "string" && args.runner_tags.trim() ? args.runner_tags.trim() : "linux,go,gha";
     const duration = args.duration_seconds === undefined ? 20400 : Number(args.duration_seconds);
@@ -67,9 +70,11 @@ export async function runLocalMcpHubControlTool(name: string, args: Record<strin
     if (!Number.isInteger(duration) || duration < 60 || duration > 20400) throw new Error("duration_seconds must be between 60 and 20400.");
     const existingSecrets = await runGitHubSecretTool("list_github_secrets", repo, account.token);
     const existingNames = Array.isArray(existingSecrets.secrets) ? existingSecrets.secrets.map((item: any) => String(item.name)) : [];
-    if (!existingNames.includes("MCP_TOKEN")) throw new Error("GitHub Actions repository secret MCP_TOKEN is missing. It must be the same token configured on the Hub Worker and Go runners.");
     const wf = await workflow(account.token, repo);
+    // Always overwrite both values: GitHub only exposes secret names, so an existing
+    // MCP_TOKEN may still be stale after the selected RTDB account was changed.
     await runGitHubSecretTool("set_github_secret", { ...repo, secret_name: "HUB_URLS", value: values.HUB_URLS }, account.token);
+    await runGitHubSecretTool("set_github_secret", { ...repo, secret_name: "MCP_TOKEN", value: values.MCP_TOKEN }, account.token);
     const repository = await github(account.token, path);
     await github(account.token, path + "/actions/workflows/" + WORKFLOW + "/dispatches", { method: "POST", body: JSON.stringify({ ref: String(repository.default_branch || "main"), inputs: { runner_name: runnerName, runner_tags: runnerTags, duration_seconds: String(duration) } }) });
     const recent = await runs(account.token, repo, 10);
