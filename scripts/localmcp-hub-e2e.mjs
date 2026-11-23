@@ -1,4 +1,6 @@
-const base = new URL(process.env.MCP_DOMAIN).origin;
+const rawDomain = String(process.env.MCP_DOMAIN ?? "").trim().replace(/^https?:\\/\\//i, "").split(/[/?#]/, 1)[0];
+if (!rawDomain) throw new Error("MCP_DOMAIN is missing.");
+const base = "https://" + rawDomain;
 const token = process.env.MCP_TOKEN;
 if (!token || token.length < 16) throw new Error("MCP_TOKEN is missing or too short.");
 const session = "proxy-hub-e2e-" + crypto.randomUUID();
