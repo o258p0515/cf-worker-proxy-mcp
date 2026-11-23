@@ -22,7 +22,8 @@ export default {async fetch(req:Request,env:Env):Promise<Response>{
  if(["/mcp","/sse","/messages"].includes(path)){
   const auth=await authenticateRequest(req,env);
   if(!auth)return withCors(new Response("Unauthorized",{status:401,headers:{"WWW-Authenticate":'Bearer resource_metadata="'+env.PUBLIC_ORIGIN+'/.well-known/oauth-protected-resource"'}}));
-  if(path==="/mcp")return withCors(await handleStreamableHttp(req,env,auth));
+  const requestContext={...auth,sessionId:req.headers.get("Mcp-Session-Id")||req.headers.get("X-Session-Id")||auth.subject};
+  if(path==="/mcp")return withCors(await handleStreamableHttp(req,env,requestContext));
   const sid=path==="/sse"?crypto.randomUUID():u.searchParams.get("sessionId");
   if(!sid)return withCors(Response.json({error:"sessionId is required"},{status:400}));
   const stub=env.SSE_SESSIONS.get(env.SSE_SESSIONS.idFromName(sid));
