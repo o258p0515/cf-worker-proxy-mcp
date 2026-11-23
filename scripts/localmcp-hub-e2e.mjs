@@ -1,4 +1,5 @@
-const rawDomain = String(process.env.MCP_DOMAIN ?? "").trim().replace(/^https?:\\/\\//i, "").split(/[/?#]/, 1)[0];
+let rawDomain = String(process.env.MCP_DOMAIN ?? "").trim();
+rawDomain = rawDomain.replace("https://", "").replace("http://", "").split("/")[0].split("?")[0].split("#")[0];
 if (!rawDomain) throw new Error("MCP_DOMAIN is missing.");
 const base = "https://" + rawDomain;
 const token = process.env.MCP_TOKEN;
