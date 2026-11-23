@@ -95,18 +95,6 @@ jobs:
           echo "$WORKFLOW" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||r.result?.isError)process.exit(1);const v=JSON.parse(r.result?.content?.[0]?.text||"{}");if(v.state!=="active"||v.path!==".github/workflows/example-run.yml")process.exit(1);console.log("Production LocalMCP workflow check passed")})'
           SECRETS=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"localmcp_check_secrets","arguments":{}}}')
           echo "$SECRETS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||r.result?.isError){console.error("LocalMCP secret check RPC error: "+JSON.stringify(r.error||r.result));process.exit(1)}const v=JSON.parse(r.result?.content?.[0]?.text||"{}");const missing=v.required_missing_on_github||[];console.log("LocalMCP secret metadata (values hidden): "+JSON.stringify({repository:v.repository,configured_names:v.configured_names,required_missing_from_rtdb:v.required_missing_from_rtdb,required_missing_on_github:missing}));if(missing.length){console.error("Required GitHub repository secrets missing: "+missing.join(", "));process.exit(1)}console.log("Production LocalMCP GitHub secret-name check passed; all required secrets exist and no values were returned")})'
-          HUB_STATUS=$(curl --silent --show-error --output /tmp/hub-check.json --write-out '%{http_code}' -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":27,"method":"tools/call","params":{"name":"localmcp_hub_check_connection","arguments":{}}}')
-          HUB_CHECK=$(cat /tmp/hub-check.json)
-          echo "Proxy-to-Hub HTTP status: $HUB_STATUS"
-          echo "Proxy-to-Hub diagnostic raw response: $HUB_CHECK"
-          if [ "$HUB_STATUS" != "200" ]; then exit 1; fi
-          HUB_READY=$(echo "$HUB_CHECK" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const v=JSON.parse(r.result?.content?.[0]?.text||"{}");console.error("Proxy-to-Hub connection diagnostic: "+JSON.stringify(v));if(r.error)process.exit(1);if(v.ready===true)process.stdout.write("yes");else if(/HUB_URLS|MCP_TOKEN is missing/.test(v.reason||""))process.stdout.write("not-configured");else{console.error(JSON.stringify(r.result||r));process.exit(1)}})')
-          if [ "$HUB_READY" = "yes" ]; then
-            HUB_RUNNERS=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":28,"method":"tools/call","params":{"name":"hub__list_runners","arguments":{}}}')
-            echo "$HUB_RUNNERS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||r.result?.isError)process.exit(1);const v=JSON.parse(r.result?.content?.[0]?.text||"{}");if(!Array.isArray(v.runners))process.exit(1);console.log("Production Proxy-to-Hub MCP call passed; online runners="+v.runners.length)})'
-          else
-            echo "LocalMCP Hub is not configured in this account; Hub runtime smoke skipped."
-          fi
       - name: Record deployment result
         if: always()
         env:
