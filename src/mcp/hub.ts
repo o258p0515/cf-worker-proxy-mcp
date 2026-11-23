@@ -23,11 +23,11 @@ async function sessionId(ctx: AuthContext): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", source);
   return Array.from(new Uint8Array(digest)).map(value => value.toString(16).padStart(2, "0")).join("").slice(0, 40);
 }
-function hubConfig(account: RtdbAccount) {
+function hubConfig(account: RtdbAccount, fallbackToken = "") {
   const configured = secrets(account);
-  const token = configured.MCP_TOKEN || "";
+  const token = configured.MCP_TOKEN || fallbackToken;
   const urls = hubUrls(account).map(validateHubUrl);
-  if (!token) throw new Error("MCP_TOKEN is missing from RTDB localmcpgo_secrets; it is used by both the Go MCP server and LocalMCP Hub.");
+  if (!token) throw new Error("MCP_TOKEN is not available to the Proxy for Hub authentication. Configure it in RTDB localmcpgo_secrets or align the Proxy MCP_TOKEN with the Hub MCP_TOKEN.");
   if (!urls.length) throw new Error("HUB_URLS is missing from RTDB localmcpgo_secrets.");
   return { token, urls };
 }
@@ -45,9 +45,9 @@ async function requestHub(base: string, token: string, session: string, rpc: Rec
   if (parsed.error) throw new Error(String(parsed.error.message || "Hub MCP request failed"));
   return parsed.result ?? {};
 }
-export async function getHubTools(account: RtdbAccount, ctx: AuthContext): Promise<McpTool[]> {
+export async function getHubTools(account: RtdbAccount, ctx: AuthContext, fallbackToken = ""): Promise<McpTool[]> {
   let configured: ReturnType<typeof hubConfig>;
-  try { configured = hubConfig(account); } catch { return []; }
+  try { configured = hubConfig(account, fallbackToken); } catch { return []; }
   const fallback = HUB_META_TOOLS.map(tool => ({ ...tool, name: HUB_TOOL_PREFIX + tool.name, description: "LocalMCP Hub: " + tool.description }));
   const session = await sessionId(ctx);
   for (const base of configured.urls) {
@@ -59,10 +59,10 @@ export async function getHubTools(account: RtdbAccount, ctx: AuthContext): Promi
   }
   return fallback;
 }
-export async function callHubTool(name: string, args: Record<string, unknown>, account: RtdbAccount, ctx: AuthContext) {
+export async function callHubTool(name: string, args: Record<string, unknown>, account: RtdbAccount, ctx: AuthContext, fallbackToken = "") {
   const toolName = name.startsWith(HUB_TOOL_PREFIX) ? name.slice(HUB_TOOL_PREFIX.length) : name;
   if (!toolName || !/^[A-Za-z0-9_.-]{1,128}$/.test(toolName)) throw new Error("Invalid LocalMCP Hub tool name.");
-  const { token, urls } = hubConfig(account);
+  const { token, urls } = hubConfig(account, fallbackToken);
   const session = await sessionId(ctx);
   const failures: string[] = [];
   for (const base of urls) {
@@ -71,9 +71,9 @@ export async function callHubTool(name: string, args: Record<string, unknown>, a
   }
   throw new Error("Unable to reach any configured LocalMCP Hub. " + failures.join(" | "));
 }
-export async function checkHubConnection(account: RtdbAccount) {
+export async function checkHubConnection(account: RtdbAccount, fallbackToken = "") {
   let configured: ReturnType<typeof hubConfig>;
-  try { configured = hubConfig(account); } catch (error) { return { ready: false, reason: error instanceof Error ? error.message : String(error) }; }
+  try { configured = hubConfig(account, fallbackToken); } catch (error) { return { ready: false, reason: error instanceof Error ? error.message : String(error) }; }
   const checks: Array<Record<string, unknown>> = [];
   for (const base of configured.urls) {
     try {

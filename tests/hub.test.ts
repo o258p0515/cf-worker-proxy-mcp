@@ -49,6 +49,19 @@ describe("isolated LocalMCP Hub proxy layer", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("uses the Proxy MCP_TOKEN as a fallback when the shared token is not duplicated in RTDB", async () => {
+    const fetch = vi.fn(async (_input: any, init: any) => {
+      expect(init.headers.Authorization).toBe("Bearer proxy-shared-token-0123456789");
+      const rpc = JSON.parse(init.body);
+      return Response.json({ jsonrpc: "2.0", id: rpc.id, result: { tools: [{ name: "bash", inputSchema: { type: "object", properties: {} } }] } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const withoutRtdbToken = { ...account, localmcpgo_secrets: { HUB_URLS: "https://hub.example.com" } };
+    const tools = await getHubTools(withoutRtdbToken, ctx, "proxy-shared-token-0123456789");
+    expect(tools.map(tool => tool.name)).toEqual([HUB_TOOL_PREFIX + "bash"]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("does not expose Hub tools when no Hub URL is configured", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);

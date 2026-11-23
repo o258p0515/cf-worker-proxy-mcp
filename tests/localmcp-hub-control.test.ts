@@ -23,17 +23,17 @@ describe("separate LocalMCP Hub lifecycle controls", () => {
       throw new Error("Unexpected request " + url);
     });
     vi.stubGlobal("fetch", fetch);
-    secretTool.mockResolvedValue({ updated: true });
+    secretTool.mockImplementation(async (name: string) => name === "list_github_secrets" ? { secrets: [{ name: "MCP_TOKEN" }] } : { updated: true });
     const result = await runLocalMcpHubControlTool("localmcp_hub_start", { runner_name: "build-01", runner_tags: "linux,go", duration_seconds: 3600 }, account);
     expect(result.dispatched).toBe(true);
     expect(result.runner_name).toBe("build-01");
-    expect(secretTool.mock.calls.map(call => call[1].secret_name)).toEqual(["HUB_URLS", "MCP_TOKEN"]);
+    expect(secretTool.mock.calls.filter(call => call[0] === "set_github_secret").map(call => call[1].secret_name)).toEqual(["HUB_URLS"]);
     const dispatch = calls.find(call => call.url.endsWith("/dispatches"));
     expect(JSON.parse(dispatch?.init.body).inputs).toEqual({ runner_name: "build-01", runner_tags: "linux,go", duration_seconds: "3600" });
     expect(dispatch?.init.method).toBe("POST");
   });
 
-  it("refuses to start Hub runners if Hub configuration is incomplete", async () => {
+  it("refuses to start Hub runners if Hub URL is missing", async () => {
     await expect(runLocalMcpHubControlTool("localmcp_hub_start", {}, { ...account, localmcpgo_secrets: { MCP_TOKEN: "x" } }))
       .rejects.toThrow(/HUB_URLS/);
     expect(secretTool).not.toHaveBeenCalled();
