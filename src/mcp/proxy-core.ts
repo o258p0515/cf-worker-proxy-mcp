@@ -17,12 +17,24 @@ function error(id: JsonRpc["id"], code: number, message: string) { return { json
 function textResult(value: unknown, isError = false) {
   return { content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }], ...(isError ? { isError: true } : {}) };
 }
-function selectionKey(ctx: AuthContext) { return `mcp:selected-account:v1:${ctx.method}:${encodeURIComponent(ctx.subject)}`; }
+function selectionKey(ctx: AuthContext) { return `mcp:selected-account:v2:${ctx.method}:${encodeURIComponent(ctx.subject)}`; }
+function selectionStub(env: Env, ctx: AuthContext) {
+  return env.SSE_SESSIONS.get(env.SSE_SESSIONS.idFromName(selectionKey(ctx)));
+}
+async function saveSelectedAlias(env: Env, ctx: AuthContext, alias: string) {
+  const response = await selectionStub(env, ctx).fetch("https://session.internal/_internal/account-selection", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ alias })
+  });
+  if (!response.ok) throw new Error("Failed to persist GitHub account selection (HTTP " + response.status + ").");
+}
 async function selectedAlias(env: Env, ctx: AuthContext): Promise<string | undefined> {
   if (ctx.pinnedAccount) return ctx.pinnedAccount;
-  return (await env.CACHE_KV.get(selectionKey(ctx))) || undefined;
+  const response = await selectionStub(env, ctx).fetch("https://session.internal/_internal/account-selection");
+  if (!response.ok) throw new Error("Failed to read GitHub account selection (HTTP " + response.status + ").");
+  const saved = await response.json() as { alias?: unknown };
+  return typeof saved.alias === "string" ? saved.alias : undefined;
 }
-async function selectAccount(env: Env, ctx: AuthContext, requested?: string, targetOwner?: string) {
+async function selectAccount(env: Env, ctx: AuthContext, requested?: string, targetOwner?: string, allowCatalogDefault = false) {
   const accounts = await getAccounts(env);
   const enabled = Object.entries(accounts).filter(([, account]) => account.enabled);
   const pinned = requested || await selectedAlias(env, ctx);
@@ -32,7 +44,8 @@ async function selectAccount(env: Env, ctx: AuthContext, requested?: string, tar
     if (matches.length === 1) alias = matches[0]?.[0] || "";
     else if (matches.length > 1) throw new Error(`More than one GitHub account can access owner/org '${targetOwner}'. Call list_github_accounts, then select_github_account with the intended alias.`);
   }
-  if (!alias) alias = (enabled.find(([, account]) => account.is_catalog_source) || enabled[0])?.[0] || "";
+  if (!alias && allowCatalogDefault) alias = (enabled.find(([, account]) => account.is_catalog_source) || enabled[0])?.[0] || "";
+  if (!alias) throw new Error("No GitHub account is selected. Call list_github_accounts, then select_github_account with an exact alias. No account fallback is performed.");
   const resolved = await resolveAccount(env, alias);
   if (!resolved.ok) {
     const available = resolved.availableAccounts.map(a => `${a.alias} (${a.username}${a.readonly ? ", read-only" : ""})`).join(", ");
@@ -57,7 +70,7 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
       }
     }
     if (msg.method === "tools/list") {
-      const { alias, account } = await selectAccount(env, ctx);
+      const { alias, account } = await selectAccount(env, ctx, undefined, undefined, true);
       const upstream = await callUpstream(env, account, alias, { ...msg, params: p });
       if (upstream?.error) return upstream;
       const upstreamResult = upstream?.result || {};
@@ -72,7 +85,7 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
         const alias = typeof args.alias === "string" ? args.alias.trim() : "";
         const resolved = await resolveAccount(env, alias);
         if (!resolved.ok) throw new Error(`Unknown or disabled GitHub account '${alias}'. Available accounts: ${resolved.availableAccounts.map(a => `${a.alias} (${a.username}${a.readonly ? ", read-only" : ""})`).join(", ") || "none"}`);
-        await env.CACHE_KV.put(selectionKey(ctx), alias, { expirationTtl: 86400 });
+        await saveSelectedAlias(env, ctx, alias);
         return hasId ? result(msg.id, textResult({ selected: alias, username: resolved.account.username, readonly: resolved.account.readonly, message: `GitHub account '${alias}' is now active for this MCP connection.` })) : null;
       }
       const requested = ctx.pinnedAccount || (typeof args.account === "string" ? args.account : undefined);
@@ -102,7 +115,7 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
         throw e;
       }
     }
-    const { alias, account } = await selectAccount(env, ctx);
+    const { alias, account } = await selectAccount(env, ctx, undefined, undefined, true);
     const upstream = await callUpstream(env, account, alias, msg);
     return hasId ? upstream : null;
   } catch (e) {
