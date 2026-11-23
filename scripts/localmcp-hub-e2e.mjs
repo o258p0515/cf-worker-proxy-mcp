@@ -7,7 +7,7 @@ const base = "https://" + rawDomain;
 // Compare the registry reached by the Proxy with the public Hub registry.
 // A mismatch proves that runners and the Proxy are talking to different Hub deployments.
 const wranglerConfig = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
-const configuredHubOrigin = process.env.HUB_ORIGIN || wranglerConfig.match(/"LOCALMCP_HUB_ORIGIN"\\s*:\\s*"([^"]+)"/)?.[1];
+const configuredHubOrigin = process.env.HUB_ORIGIN || wranglerConfig.match(/"LOCALMCP_HUB_ORIGIN"\s*:\s*"([^"]+)"/)?.[1];
 if (!configuredHubOrigin) throw new Error("LOCALMCP_HUB_ORIGIN is missing from wrangler.jsonc.");
 const hubOrigin = new URL(configuredHubOrigin).origin;
 const hubDomain = new URL(hubOrigin).host;
