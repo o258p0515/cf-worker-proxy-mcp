@@ -7,7 +7,7 @@ describe("agent account and Actions secret controls", () => {
     expect(tools.map(tool => tool.name)).toEqual([
       "list_github_accounts", "select_github_account", "list_github_secrets", "set_github_secret", "delete_github_secret",
       "localmcp_configure_secrets", "localmcp_check_secrets", "localmcp_reset_secrets", "localmcp_check_workflow",
-      "localmcp_start", "localmcp_stop", "localmcp_restart", "localmcp_status", "localmcp_runs", "localmcp_logs", "localmcp_connection_check", "localmcp_hub_check_connection"
+      "localmcp_start", "localmcp_stop", "localmcp_restart", "localmcp_status", "localmcp_runs", "localmcp_logs", "localmcp_connection_check", "localmcp_hub_check_connection", "localmcp_hub_check_secrets", "localmcp_hub_check_workflow", "localmcp_hub_start", "localmcp_hub_stop", "localmcp_hub_status", "localmcp_hub_runs"
     ]);
     expect(tools.find(tool => tool.name === "set_github_secret")?.inputSchema?.required).toEqual(["owner", "repo", "secret_name", "value"]);
     expect(getProxyCustomTools(true).map(tool => tool.name)).toContain("refresh_accounts");
