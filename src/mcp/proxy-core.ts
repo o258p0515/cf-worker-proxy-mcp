@@ -3,12 +3,14 @@ import { getAccounts, listPublicAccounts, resolveAccount, clearAccountCaches } f
 import { callUpstream, clearUpstreamSessions } from "./upstream-client";
 import { getProxyCustomTools } from "./schema-injector";
 import { runGitHubSecretTool } from "./github-secrets";
+import { runLocalMcpTool } from "./localmcp";
 import { auditLog } from "../utils/logger";
 
 const DASHBOARD_SUBJECT = "api-explorer";
 const WRITE_TOOL = /(?:^|_)(?:write|create|update|delete|push|merge|add|remove|fork|dismiss|submit|request|close|reopen|assign|cancel|rerun|enable|disable|set|put|patch)(?:_|$)/i;
-const EXPLICITLY_MUTATING = new Set(["run_secret_scanning", "actions_run_trigger", "set_github_secret", "delete_github_secret"]);
+const EXPLICITLY_MUTATING = new Set(["run_secret_scanning", "actions_run_trigger", "set_github_secret", "delete_github_secret", "localmcp_configure_secrets", "localmcp_reset_secrets", "localmcp_check_workflow", "localmcp_start", "localmcp_stop", "localmcp_restart"]);
 const SECRET_TOOLS = new Set(["list_github_secrets", "set_github_secret", "delete_github_secret"]);
+const LOCALMCP_TOOLS = new Set(["localmcp_configure_secrets", "localmcp_check_secrets", "localmcp_reset_secrets", "localmcp_check_workflow", "localmcp_start", "localmcp_stop", "localmcp_restart", "localmcp_status", "localmcp_runs", "localmcp_logs", "localmcp_connection_check"]);
 
 function result(id: JsonRpc["id"], value: unknown) { return { jsonrpc: "2.0", id, result: value }; }
 function error(id: JsonRpc["id"], code: number, message: string) { return { jsonrpc: "2.0", id, error: { code, message } }; }
@@ -87,6 +89,11 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
           auditLog({ event: "tool_call", tool: name, account: alias, authMethod: ctx.method, durationMs: Date.now() - start, status: "ok" });
           return result(msg.id, textResult(secretResult));
         }
+        if (LOCALMCP_TOOLS.has(name)) {
+          const localResult = await runLocalMcpTool(name, args, env, alias, account);
+          auditLog({ event: "tool_call", tool: name, account: alias, authMethod: ctx.method, durationMs: Date.now() - start, status: "ok" });
+          return result(msg.id, textResult(localResult));
+        }
         const upstream = await callUpstream(env, account, alias, { ...msg, params: { ...p, name, arguments: args } });
         auditLog({ event: "tool_call", tool: name, account: alias, authMethod: ctx.method, durationMs: Date.now() - start, status: upstream?.result?.isError || upstream?.error ? "error" : "ok" });
         return upstream;
@@ -106,3 +113,4 @@ export async function handleJsonRpcBatch(msgs: JsonRpc[], env: Env, ctx: AuthCon
   const out = await Promise.all(msgs.map(m => handleJsonRpcMessage(m, env, ctx)));
   return out.filter(Boolean);
 }
+  116

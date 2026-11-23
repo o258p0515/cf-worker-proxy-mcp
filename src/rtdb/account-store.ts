@@ -3,6 +3,7 @@ import { decryptAesGcm, encryptAesGcm } from "../utils/crypto";
 import { googleAccessToken, resolveServiceAccountFromEnv } from "./google-jwt";
 
 let memory: { accounts: Record<string, RtdbAccount>; expires: number } | null = null;
+let activeRtdbUrl = "";
 
 function normalizeDbUrl(raw: string, removeAuth = false): string {
   const url = new URL(raw);
@@ -38,7 +39,10 @@ function normalize(raw: unknown): Record<string, RtdbAccount> {
       orgs: Array.isArray(account.orgs) ? account.orgs.map(String) : [],
       enabled: account.enabled !== false,
       readonly: account.readonly === true,
-      is_catalog_source: account.is_catalog_source === true
+      is_catalog_source: account.is_catalog_source === true,
+      localmcpgo_secrets: account.localmcpgo_secrets && typeof account.localmcpgo_secrets === "object" && !Array.isArray(account.localmcpgo_secrets)
+        ? Object.fromEntries(Object.entries(account.localmcpgo_secrets).filter(([key, value]) => /^[A-Z_][A-Z0-9_]{0,99}$/.test(key) && typeof value === "string" && value.length > 0))
+        : {}
     };
   }
   return out;
@@ -90,6 +94,7 @@ export async function getAccounts(env: Env, options: { forceRefresh?: boolean } 
       }
     }
   }
+  activeRtdbUrl = url;
   const accounts = normalize(raw);
   if (!Object.values(accounts).some(account => account.enabled)) throw new Error("Firebase RTDB contains no enabled GitHub account with a token at /github_accounts or /env/github_accounts");
 
@@ -122,7 +127,26 @@ export async function resolveAccount(env: Env, alias: string) {
     : { ok: false as const, reason: "invalid_or_missing", availableAccounts };
 }
 
+export async function setLocalMcpSecrets(env: Env, alias: string, secrets: Record<string, string>, replace = false) {
+  // Force a fresh read so the selected RTDB node (including /env fallback) is known.
+  await getAccounts(env, { forceRefresh: true });
+  if (!activeRtdbUrl) throw new Error("RTDB account path could not be resolved");
+  const url = new URL(activeRtdbUrl);
+  url.pathname = url.pathname.replace(/\.json$/, "") + "/" + encodeURIComponent(alias) + "/localmcpgo_secrets.json";
+  const serviceAccount = resolveServiceAccountFromEnv(env);
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (serviceAccount) {
+    url.searchParams.delete("auth");
+    headers.set("Authorization", "Bearer " + await googleAccessToken(env));
+  }
+  const response = await fetch(url, { method: replace ? "PUT" : "PATCH", headers, body: JSON.stringify(secrets) });
+  if (!response.ok) throw new Error("Firebase RTDB secret configuration write failed (HTTP " + response.status + ")");
+  await clearAccountCaches(env);
+  return Object.keys(secrets);
+}
+
 export async function clearAccountCaches(env: Env) {
   memory = null;
+  activeRtdbUrl = "";
   await Promise.all(["rtdb:accounts:v1", "mcp:tools_catalog:v1", "mcp:tools_catalog:v2", "mcp:tools_catalog:v3"].map(key => env.CACHE_KV.delete(key)));
 }

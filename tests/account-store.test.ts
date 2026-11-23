@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { getAccounts, listPublicAccounts, resolveAccount, clearAccountCaches } from "../src/rtdb/account-store";
+import { getAccounts, listPublicAccounts, resolveAccount, clearAccountCaches, setLocalMcpSecrets } from "../src/rtdb/account-store";
 
 function makeKV() {
   const values = new Map<string, string>();
@@ -107,4 +107,36 @@ describe("Firebase account store", () => {
     expect(rtdb.init.headers.get("Authorization")).toBe("Bearer google-access");
     expect(rtdb.url).not.toContain("auth=");
   });
+
+  it("preserves LocalMCP secrets in the encrypted account cache without exposing them publicly", async () => {
+    const secretValue = "localmcp-private-value";
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      personal: { username: "me", token: "ghp_pat", enabled: true, localmcpgo_secrets: { MCP_TOKEN: secretValue, CF_DOMAIN: "mcp.example.test" } }
+    })));
+    const e = env();
+    const accounts = await getAccounts(e);
+    expect(accounts.personal!.localmcpgo_secrets).toEqual({ MCP_TOKEN: secretValue, CF_DOMAIN: "mcp.example.test" });
+    const cached = e.CACHE_KV.values.get("rtdb:accounts:v1");
+    expect(cached).toBeTruthy();
+    expect(cached).not.toContain(secretValue);
+    expect((await listPublicAccounts(e))[0]).not.toHaveProperty("localmcpgo_secrets");
+  });
+
+  it("writes LocalMCP secrets to the selected account RTDB child and clears account cache", async () => {
+    const calls: Array<{ url: string; init: any }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (init.method === "PATCH") return Response.json({ MCP_TOKEN: "private" });
+      return Response.json(defaultData);
+    }));
+    const e = env();
+    await getAccounts(e);
+    await setLocalMcpSecrets(e, "personal", { MCP_TOKEN: "private" });
+    const write = calls.find(call => call.init.method === "PATCH")!;
+    expect(new URL(write.url).pathname).toBe("/github_accounts/personal/localmcpgo_secrets.json");
+    expect(JSON.parse(write.init.body)).toEqual({ MCP_TOKEN: "private" });
+    expect(e.CACHE_KV.values.has("rtdb:accounts:v1")).toBe(false);
+  });
+
 });

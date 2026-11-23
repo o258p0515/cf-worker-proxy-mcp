@@ -1,6 +1,7 @@
 export interface RtdbAccount {
   username: string; token: string; description: string; orgs: string[];
   enabled: boolean; readonly: boolean; is_catalog_source?: boolean;
+  localmcpgo_secrets?: Record<string, string>;
 }
 export interface Env {
   MCP_TOKEN: string; MCP_API_PASSPHRASE?: string; MCP_OAUTH_CLIENT_ID?: string; MCP_OAUTH_CLIENT_SECRET?: string;
@@ -14,3 +15,4 @@ export interface Env {
 export interface AuthContext { authenticated?: boolean; method: "static_token" | "oauth"; subject: string; pinnedAccount?: string }
 export interface McpTool { name: string; description?: string; inputSchema?: { type?: string; properties?: Record<string, unknown>; required?: string[]; [key:string]: unknown }; [key:string]: unknown }
 export interface JsonRpc { jsonrpc: "2.0"; id?: string|number|null; method: string; params?: any }
+   18
