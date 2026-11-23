@@ -11,6 +11,9 @@ describe("agent account and Actions secret controls", () => {
     ]);
     expect(tools.find(tool => tool.name === "set_github_secret")?.inputSchema?.required).toEqual(["owner", "repo", "secret_name", "value"]);
     expect(getProxyCustomTools(true).map(tool => tool.name)).toContain("refresh_accounts");
+    expect(tools.every(tool => !tool.inputSchema?.properties?.account)).toBe(true);
+    const dashboardLocalMcp = getProxyCustomTools(true).find(tool => tool.name === "localmcp_start");
+    expect(dashboardLocalMcp?.inputSchema?.properties?.account).toBeTruthy();
   });
 });
-   16
+   19

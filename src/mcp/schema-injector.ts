@@ -5,8 +5,12 @@ const repoFields = {
   repo: { type: "string", description: "Repository name" },
 };
 const secretTargetRequired = ["owner", "repo"];
-const localmcpRepoFields = { ...repoFields, account: { type: "string", description: "Optional GitHub account alias; defaults to the currently selected account" } };
 export function getProxyCustomTools(includeAdmin = false): McpTool[] {
+  // Only the protected API Explorer receives an account selector field.
+  // MCP agents use select_github_account; account stays out of normal tool schemas.
+  const localmcpRepoFields = includeAdmin
+    ? { ...repoFields, account: { type: "string", description: "Optional GitHub account alias for this Dashboard call" } }
+    : repoFields;
   const tools: McpTool[] = [
     { name: "list_github_accounts", description: "List enabled GitHub accounts available to this MCP connection. Returns aliases, usernames, organizations, and read-only status; never returns credentials. Call this first when choosing which GitHub identity to use.", inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false } },
     { name: "select_github_account", description: "Switch the active GitHub account for this MCP connection. Call list_github_accounts first, then select the exact alias. The selected account is remembered for subsequent GitHub MCP calls until switched again.", inputSchema: { type: "object", properties: { alias: { type: "string", description: "Exact account alias returned by list_github_accounts" } }, required: ["alias"], additionalProperties: false } },
@@ -28,4 +32,4 @@ export function getProxyCustomTools(includeAdmin = false): McpTool[] {
   if (includeAdmin) tools.push({ name: "refresh_accounts", description: "Refresh account and upstream tool catalog caches for the protected API Explorer.", inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false } });
   return tools;
 }
-   31
+   35
