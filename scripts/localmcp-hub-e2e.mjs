@@ -43,7 +43,8 @@ async function tool(name, args = {}) {
   return result;
 }
 async function listRunners() {
-  return parseText(await tool("hub__list_runners"), "hub__list_runners").runners ?? [];
+  const result = await tool("localmcp_hub_call", { tool_name: "list_runners", arguments: {} });
+  return parseText(result, "localmcp_hub_call list_runners").runners ?? [];
 }
 async function waitFor(predicate, label, attempts = 60, delay = 3000) {
   for (let i = 0; i < attempts; i++) {
@@ -54,22 +55,23 @@ async function waitFor(predicate, label, attempts = 60, delay = 3000) {
   throw new Error("Timed out waiting for " + label);
 }
 async function startRunner(name) {
+  // Snapshot existing workflow IDs before dispatch. This prevents two quick
+  // starts from both claiming the same newest workflow run.
+  const before = parseText(await tool("localmcp_hub_runs"), "localmcp_hub_runs before " + name);
+  const knownIds = new Set((before.runs ?? []).map(item => Number(item.id)));
   const requestedAt = Date.now();
-  const result = parseText(await tool("localmcp_hub_start", {
+  await tool("localmcp_hub_start", {
     runner_name: name, runner_tags: "linux,go,gha,proxy-e2e", duration_seconds: 900
-  }), "localmcp_hub_start " + name);
-  let runId = result.run?.id ?? null;
-  if (!runId) {
-    const run = await waitFor(async () => {
-      const data = parseText(await tool("localmcp_hub_runs"), "localmcp_hub_runs");
-      return (data.runs ?? []).find(item =>
-        Date.parse(item.created_at || "") >= requestedAt - 15000 &&
-        ["queued", "in_progress", "waiting", "requested"].includes(item.status)
-      ) ?? null;
-    }, "GitHub Actions run ID for " + name, 30, 2000);
-    runId = run.id;
-  }
-  return Number(runId);
+  });
+  const run = await waitFor(async () => {
+    const data = parseText(await tool("localmcp_hub_runs"), "localmcp_hub_runs after " + name);
+    return (data.runs ?? []).find(item =>
+      !knownIds.has(Number(item.id)) &&
+      Date.parse(item.created_at || "") >= requestedAt - 15000 &&
+      ["queued", "in_progress", "waiting", "requested"].includes(item.status)
+    ) ?? null;
+  }, "new GitHub Actions run ID for " + name, 30, 2000);
+  return Number(run.id);
 }
 async function stop(runId) {
   if (!runId) return;
@@ -82,7 +84,7 @@ try {
   await tool("select_github_account", { alias: "personal" });
   const tools = await rpc("tools/list");
   const names = (tools.tools ?? []).map(item => item.name);
-  for (const name of ["localmcp_hub_check_connection", "localmcp_hub_tools", "localmcp_hub_call", "localmcp_hub_start", "localmcp_hub_stop", "hub__list_runners", "hub__select_runner"]) {
+  for (const name of ["localmcp_hub_check_connection", "localmcp_hub_tools", "localmcp_hub_call", "localmcp_hub_start", "localmcp_hub_stop"]) {
     if (!names.includes(name)) throw new Error("Missing Proxy Hub tool: " + name);
   }
   const connection = parseText(await tool("localmcp_hub_check_connection"), "localmcp_hub_check_connection");
