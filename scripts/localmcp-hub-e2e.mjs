@@ -82,7 +82,7 @@ try {
   await tool("select_github_account", { alias: "personal" });
   const tools = await rpc("tools/list");
   const names = (tools.tools ?? []).map(item => item.name);
-  for (const name of ["localmcp_hub_check_connection", "localmcp_hub_start", "localmcp_hub_stop", "hub__list_runners", "hub__select_runner"]) {
+  for (const name of ["localmcp_hub_check_connection", "localmcp_hub_tools", "localmcp_hub_call", "localmcp_hub_start", "localmcp_hub_stop", "hub__list_runners", "hub__select_runner"]) {
     if (!names.includes(name)) throw new Error("Missing Proxy Hub tool: " + name);
   }
   const connection = parseText(await tool("localmcp_hub_check_connection"), "localmcp_hub_check_connection");
@@ -104,25 +104,26 @@ try {
   }, "both runners to register online");
   console.log("Hub Registry reports both runners online.");
 
-  await tool("hub__select_runner", { runner_id: runnerA });
-  const remoteTools = await rpc("tools/list");
-  if (!(remoteTools.tools ?? []).some(item => item.name === "hub__bash")) {
-    throw new Error("Hub runner tools were not exposed through the Proxy after selecting runner A.");
-  }
+  const stableCatalog = parseText(await tool("localmcp_hub_tools"), "localmcp_hub_tools");
+  if (!(stableCatalog.tools ?? []).some(item => item.name === "hub__bash")) throw new Error("Stable Hub catalog did not return the runner bash tool.");
   const [a, b] = await Promise.all([
-    tool("hub__bash", { runner_id: runnerA, command: "printf proxy-e2e-runner-a" }),
-    tool("hub__bash", { runner_id: runnerB, command: "printf proxy-e2e-runner-b" })
+    tool("localmcp_hub_call", { tool_name: "bash", runner_id: runnerA, arguments: { command: "printf proxy-e2e-runner-a" } }),
+    tool("localmcp_hub_call", { tool_name: "bash", runner_id: runnerB, arguments: { command: "printf proxy-e2e-runner-b" } })
   ]);
-  if (!textOf(a).includes("proxy-e2e-runner-a")) throw new Error("Runner A returned an unexpected bash result: " + textOf(a));
-  if (!textOf(b).includes("proxy-e2e-runner-b")) throw new Error("Runner B returned an unexpected bash result: " + textOf(b));
-  console.log("Proxy routed concurrent bash calls to two distinct Hub runners.");
+  const aPayload = parseText(a, "stable Hub call A");
+  const bPayload = parseText(b, "stable Hub call B");
+  const aText = textOf(aPayload);
+  const bText = textOf(bPayload);
+  if (!aText.includes("proxy-e2e-runner-a")) throw new Error("Runner A returned an unexpected bash result: " + aText);
+  if (!bText.includes("proxy-e2e-runner-b")) throw new Error("Runner B returned an unexpected bash result: " + bText);
+  console.log("Stable Proxy facade routed concurrent bash calls to two distinct Hub runners without refreshing dynamic tools.");
 
   await stop(runA);
   await waitFor(async () => {
     const runners = await listRunners();
     return !runners.some(r => r.runner_id === runnerA) && runners.some(r => r.runner_id === runnerB && r.status === "online");
   }, "runner A to stop while runner B remains online");
-  const remaining = await tool("hub__bash", { runner_id: runnerB, command: "printf runner-b-still-alive" });
+  const remaining = parseText(await tool("localmcp_hub_call", { tool_name: "bash", runner_id: runnerB, arguments: { command: "printf runner-b-still-alive" } }), "stable Hub remaining runner call");
   if (!textOf(remaining).includes("runner-b-still-alive")) throw new Error("Runner B stopped responding after runner A was cancelled.");
   console.log("Stopped runner A; runner B remained online and executed another tool.");
 

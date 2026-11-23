@@ -14,9 +14,10 @@ function configured(account: RtdbAccount, fallbackToken = "") {
     if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) throw new Error("HUB_URLS must contain HTTPS Hub base URLs.");
     if (url.username || url.password || url.search || url.hash) throw new Error("HUB_URLS must contain clean base URLs.");
   }
-  const token = String(secrets.MCP_TOKEN || fallbackToken || "").trim();
-  if (token.length < 16) throw new Error("MCP_TOKEN is missing or too short in RTDB localmcpgo_secrets and Proxy fallback. The Hub and runner must use the same MCP_TOKEN.");
-  return { HUB_URLS: urls.join(","), MCP_TOKEN: token };
+  const rtdbToken = String(secrets.MCP_TOKEN || "").trim();
+  const token = rtdbToken || String(fallbackToken || "").trim();
+  if (token.length < 16) throw new Error("MCP_TOKEN is missing or too short in both RTDB localmcpgo_secrets and the Proxy runtime. The Hub and runner must use the same MCP_TOKEN.");
+  return { HUB_URLS: urls.join(","), MCP_TOKEN: token, MCP_TOKEN_SOURCE: rtdbToken ? "RTDB localmcpgo_secrets" : "Proxy runtime MCP_TOKEN" };
 }
 function target(args: Record<string, unknown>, account: RtdbAccount) {
   const owner = typeof args.owner === "string" && args.owner.trim() ? args.owner.trim() : account.username;
@@ -57,8 +58,9 @@ export async function runLocalMcpHubControlTool(name: string, args: Record<strin
     const result = await runGitHubSecretTool("list_github_secrets", repo, account.token);
     const existing = Array.isArray(result.secrets) ? result.secrets.map((item: any) => String(item.name)) : [];
     const required = ["HUB_URLS", "MCP_TOKEN"];
-    const missingInRtdb = required.filter(key => !configuredSecrets[key as keyof typeof configuredSecrets]);
-    return { repository: repo.owner + "/" + repo.repo, configured_names: Object.keys(configuredSecrets), github_names: existing, missing_in_rtdb: missingInRtdb, missing_on_github: required.filter(key => !existing.includes(key)), sync_required: required.filter(key => !existing.includes(key)), values_returned: false, note: "GitHub does not reveal stored secret values; localmcp_hub_start always rewrites both shared secrets from the selected RTDB account before dispatch." };
+    const rtdbSecrets = account.localmcpgo_secrets || {};
+    const missingInRtdb = ["HUB_URLS"].filter(key => !String(rtdbSecrets[key] || "").trim());
+    return { repository: repo.owner + "/" + repo.repo, configured_names: Object.keys(rtdbSecrets).filter(key => ["HUB_URLS", "MCP_TOKEN"].includes(key)), effective_configured_names: ["HUB_URLS", "MCP_TOKEN"], token_source: configuredSecrets.MCP_TOKEN_SOURCE, github_names: existing, missing_in_rtdb: missingInRtdb, missing_on_github: required.filter(key => !existing.includes(key)), sync_required: required, values_returned: false, note: "MCP_TOKEN is read from RTDB when present, otherwise the existing Proxy runtime MCP_TOKEN is reused. GitHub does not reveal stored values; localmcp_hub_start rewrites both GitHub Actions secrets before dispatch." };
   }
   if (name === "localmcp_hub_start") {
     const values = configured(account, fallbackToken);

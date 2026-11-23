@@ -34,6 +34,22 @@ describe("separate LocalMCP Hub lifecycle controls", () => {
     expect(dispatch?.init.method).toBe("POST");
   });
 
+  it("reuses the existing Proxy MCP_TOKEN when RTDB keeps only HUB_URLS", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/actions/workflows/hub-runner.yml")) return Response.json({ id: 123, path: ".github/workflows/hub-runner.yml", state: "active" });
+      if (url.includes("/actions/workflows/hub-runner.yml/runs")) return Response.json({ workflow_runs: [] });
+      if (url === "https://api.github.com/repos/o258p0515/localmcpcoder-go") return Response.json({ default_branch: "main" });
+      if (url.endsWith("/dispatches")) return new Response(null, { status: 204 });
+      throw new Error("Unexpected request " + url);
+    }));
+    secretTool.mockImplementation(async (name: string) => name === "list_github_secrets" ? { secrets: [] } : { updated: true });
+    await runLocalMcpHubControlTool("localmcp_hub_start", { runner_name: "fallback-token" }, { ...account, localmcpgo_secrets: { HUB_URLS: "https://hub.example.com" } }, "proxy-runtime-token-0123456789");
+    const writes = secretTool.mock.calls.filter(call => call[0] === "set_github_secret");
+    expect(writes.map(call => call[1].secret_name)).toEqual(["HUB_URLS", "MCP_TOKEN"]);
+    expect(writes[1][1].value).toBe("proxy-runtime-token-0123456789");
+  });
+
   it("refuses to start Hub runners if Hub URL is missing", async () => {
     await expect(runLocalMcpHubControlTool("localmcp_hub_start", {}, { ...account, localmcpgo_secrets: { MCP_TOKEN: "x" } }))
       .rejects.toThrow(/HUB_URLS/);
