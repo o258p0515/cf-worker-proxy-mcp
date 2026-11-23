@@ -82,10 +82,10 @@ describe("isolated LocalMCP Hub proxy layer", () => {
     expect(tools.map(tool => tool.name)).toEqual(["hub__list_runners", "hub__select_runner", "hub__get_job_result"]);
   });
 
-  it("does not expose Hub tools when no Hub URL is configured", async () => {
+  it("keeps the Hub meta-tool catalog visible when no Hub URL is configured", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
-    expect(await getHubTools({ ...account, localmcpgo_secrets: { MCP_TOKEN: "x" } }, ctx)).toEqual([]);
+    expect((await getHubTools({ ...account, localmcpgo_secrets: { MCP_TOKEN: "x" } }, ctx)).map(tool => tool.name)).toEqual(["hub__list_runners", "hub__select_runner", "hub__get_job_result"]);
     expect(fetch).not.toHaveBeenCalled();
   });
 });

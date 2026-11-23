@@ -27,7 +27,8 @@ describe("separate LocalMCP Hub lifecycle controls", () => {
     const result = await runLocalMcpHubControlTool("localmcp_hub_start", { runner_name: "build-01", runner_tags: "linux,go", duration_seconds: 3600 }, account);
     expect(result.dispatched).toBe(true);
     expect(result.runner_name).toBe("build-01");
-    expect(secretTool.mock.calls.filter(call => call[0] === "set_github_secret").map(call => call[1].secret_name)).toEqual(["HUB_URLS"]);
+    expect(secretTool.mock.calls.filter(call => call[0] === "set_github_secret").map(call => call[1].secret_name)).toEqual(["HUB_URLS", "MCP_TOKEN"]);
+    expect(secretTool.mock.calls.filter(call => call[0] === "set_github_secret").map(call => call[1].value)).toEqual(["https://hub.example.com", "shared-token-0123456789abcdef"]);
     const dispatch = calls.find(call => call.url.endsWith("/dispatches"));
     expect(JSON.parse(dispatch?.init.body).inputs).toEqual({ runner_name: "build-01", runner_tags: "linux,go", duration_seconds: "3600" });
     expect(dispatch?.init.method).toBe("POST");
