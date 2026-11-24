@@ -66,7 +66,10 @@ describe("Azure DevOps Hub provider", () => {
     const result = await runAzureHubTool("localmcp_hub_start", { project: "Project A", repository: "runner-config", os: "linux", runner_tags: "go,build", duration_seconds: 9000 }, accountWithoutHubUrl, "azure", env());
     expect(result).toMatchObject({ provider: "azure", run_id: 991, runner_id: "az-linux-991", os: "linux", duration_seconds: 3300, state: "running", variable_group: { id: 12, name: "LocalMCP-Hub-azure", secret_values_returned: false, authorized: true, pipeline_id: 77 } });
     const yamlPush = calls.find(c => c.url.includes("/_apis/git/repositories/repo-id/pushes"));
-    expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("LOCALMCP_HUB_RUNNER_TEMPLATE: v6");
+    const runnerYaml = JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content;
+    expect(runnerYaml).toContain("LOCALMCP_HUB_RUNNER_TEMPLATE: v7");
+    expect(runnerYaml).toContain("elseif ($null -ne $p.ExitCode -and $p.ExitCode -ne 0)");
+    expect(runnerYaml).toContain("Runner shutdown completed");
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("$(vmImage)");
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("parameters:");
     const runWrite = calls.find(c => c.url.includes("/runs?") && c.init.method === "POST");
