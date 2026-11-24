@@ -172,10 +172,10 @@ async function ensureVariableGroup(ctx: AzureContext, project: Project, alias: s
 }
 
 function pipelineStatus(run: any) {
-  const rawState = String(run.state || "unknown").toLowerCase();
-  const state = rawState === "inprogress" ? "running" : rawState === "canceling" ? "cancelling" : rawState;
+  const rawStatus = String(run.status || run.state || "unknown").toLowerCase();
+  const state = rawStatus === "notstarted" ? "queued" : rawStatus === "inprogress" ? "running" : rawStatus === "canceling" ? "cancelling" : rawStatus;
   const result = String(run.result || "").toLowerCase();
-  return { id: Number(run.id), name: run.name, state, result: result || null, status: state === "completed" ? (result || "completed") : state, created_at: run.createdDate, finished_at: run.finishedDate, url: run._links?.web?.href || run.url };
+  return { id: Number(run.id), name: run.buildNumber || run.name || run.definition?.name, state, result: result || null, status: state === "completed" ? (result || "completed") : state, created_at: run.queueTime || run.createdDate, started_at: run.startTime || run.startedDate, finished_at: run.finishTime || run.finishedDate, templateParameters: run.templateParameters, url: run._links?.web?.href || run.url };
 }
 async function findHubRunner(account: RtdbAccount, env: any, authContext: AuthContext, runnerId: string) {
   try {
@@ -256,9 +256,10 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
     const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline.id + "/runs", { method: "POST", body: JSON.stringify({ resources: { repositories: { self: { refName: repo.defaultBranch || "refs/heads/main" } } }, templateParameters: { os, runner_name: runnerName, runner_tags: runnerTags, duration_seconds: duration, account_alias: alias, source_ref: typeof args.source_ref === "string" && /^[A-Za-z0-9_./-]{1,128}$/.test(args.source_ref) ? args.source_ref : "main" } }) });
     const runId = Number(run.id);
     const runnerId = (os === "windows" ? "az-win-" : "az-linux-") + runId;
+    const build = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId);
     const hubState = await findHubRunner(account, env, authContext, runnerId);
-    const runStatus = pipelineStatus(run);
-    return { provider: "azure", account: alias, project: project.name, repository: repo.name, pipeline: { id: pipeline.id, name: pipeline.name }, variable_group: variableGroup, run_id: runId, runner_id: runnerId, os, runner_name: runnerName, runner_tags: ["provider:azure", "os:" + os, "account:" + alias, "run:" + runId, "name:" + runnerName, ...runnerTags.split(",")], duration_seconds: duration, ...runStatus, status: runStatus.state === "running" && !hubState.online ? "queued" : runStatus.status, runner_online: hubState.online, hub_runner: hubState.runner, ...(hubState.error ? { hub_error: hubState.error } : {}), workflow_url: run._links?.web?.href || run.url };
+    const runStatus = pipelineStatus(build);
+    return { provider: "azure", account: alias, project: project.name, repository: repo.name, pipeline: { id: pipeline.id, name: pipeline.name }, variable_group: variableGroup, run_id: runId, runner_id: runnerId, os, runner_name: runnerName, runner_tags: ["provider:azure", "os:" + os, "account:" + alias, "run:" + runId, "name:" + runnerName, ...runnerTags.split(",")], duration_seconds: duration, ...runStatus, status: runStatus.state === "running" && !hubState.online ? "starting" : runStatus.status, runner_online: hubState.online, hub_runner: hubState.runner, ...(hubState.error ? { hub_error: hubState.error } : {}), workflow_url: build._links?.web?.href || build.url };
   }
   const pipelineList = discovery.pipelines[project.id] || [];
   const pipeline = args.pipeline_id
@@ -268,7 +269,7 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
   if (name === "localmcp_hub_runs") {
     const selected = pipeline ? [pipeline] : pipelineList;
     const values = await Promise.all(selected.map(async p => {
-      const data = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + p.id + "/runs?$top=20");
+      const data = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds?definitions=" + p.id + "&$top=20");
       return (data.value || []).map((run: any) => ({ pipeline_id: p.id, pipeline_name: p.name, ...pipelineStatus(run) }));
     }));
     return { provider: "azure", account: alias, project: project.name, runs: values.flat() };
@@ -276,7 +277,7 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
   const runId = Number(args.run_id);
   if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error("run_id must be a positive Azure Pipeline run ID.");
   if (name === "localmcp_hub_status") {
-    const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline!.id + "/runs/" + runId);
+    const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId);
     const runnerId = typeof args.runner_id === "string" && /^az-(?:linux|win)-[A-Za-z0-9-]+$/.test(args.runner_id)
       ? args.runner_id
       : (String(run.templateParameters?.os || "linux") === "windows" ? "az-win-" : "az-linux-") + runId;
@@ -287,7 +288,7 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
     return { provider: "azure", account: alias, project: project.name, pipeline_id: pipeline!.id, run_id: runId, runner_id: runnerId, ...runStatus, status: effectiveStatus, runner_online: hubState.online, runner_never_connected: runStatus.state === "completed" && !hubState.runner, hub_runner: hubState.runner, timeline: timelineSummary(records), ...(hubState.error ? { hub_error: hubState.error } : {}), note: "Azure Pipeline state and Hub runner registration are joined at read time; only a registered online Hub runner is ready for MCP execution." };
   }
   if (name === "localmcp_hub_stop") {
-    const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline!.id + "/runs/" + runId);
+    const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId);
     if (String(run.state).toLowerCase() === "completed") return { provider: "azure", run_id: runId, cancel_requested: false, reason: "Pipeline run is already completed." };
     const os = String(run.templateParameters?.os || "linux") === "windows" ? "windows" : "linux";
     const runnerId = typeof args.runner_id === "string" && /^az-(?:linux|win)-[A-Za-z0-9-]+$/.test(args.runner_id) ? args.runner_id : (os === "windows" ? "az-win-" : "az-linux-") + runId;
