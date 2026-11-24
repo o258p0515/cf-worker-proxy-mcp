@@ -44,7 +44,8 @@ describe("Azure DevOps Hub provider", () => {
       if (url.includes("/_apis/projects")) return Response.json({ value: [{ id: "project-id", name: "Project A" }] });
       if (url.includes("/refs?filter=heads/main")) return Response.json({ value: [{ name: "refs/heads/main", objectId: "old-object" }] });
       if (url.includes("/_apis/git/repositories?") && url.includes("/Project%20A/")) return Response.json({ value: [{ id: "repo-id", name: "runner-config", defaultBranch: "refs/heads/main" }] });
-      if (url.includes("/runs?") && init.method === "POST") return Response.json({ id: 991, state: "running", createdDate: "2026-11-24T12:00:00Z", _links: { web: { href: "https://dev.azure.com/test/run/991" } } });
+      if (url.includes("/runs?") && init.method === "POST") return Response.json({ id: 991, state: "queued" });
+      if (url.includes("/_apis/build/builds/991?")) return Response.json({ id: 991, status: "inProgress", templateParameters: { os: "linux" }, queueTime: "2026-11-24T12:00:00Z" });
       if (url.includes("/_apis/pipelines/77?") && init.method !== "POST") return Response.json({ id: 77, name: "LocalMCP Hub Runner", configuration: { type: "yaml", path: "/azure-pipelines.yml", repository: { id: "repo-id" } } });
       if (url.includes("/_apis/build/definitions/77") && (!init.method || init.method === "GET")) return Response.json({ id: 77, revision: 1, name: "LocalMCP Hub Runner", variables: {} });
       if (url.includes("/_apis/build/definitions/77") && init.method === "PUT") return Response.json({ id: 77, revision: 2, variables: JSON.parse(init.body).variables });
@@ -116,7 +117,7 @@ describe("Azure DevOps Hub provider", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: any) => {
       const url = String(input);
       if (url.includes("hub.example.test/mcp")) return Response.json({ jsonrpc: "2.0", id: "hub", result: { content: [{ type: "text", text: JSON.stringify({ runners: [{ runner_id: "az-linux-991", status: "online", os: "linux" }] }) }] } });
-      if (url.includes("/runs/991?")) return Response.json({ id: 991, state: "inProgress", createdDate: "2026-11-24T12:00:00Z", templateParameters: { os: "linux" } });
+      if (url.includes("/_apis/build/builds/991?")) return Response.json({ id: 991, status: "inProgress", queueTime: "2026-11-24T12:00:00Z", templateParameters: { os: "linux" } });
       throw new Error("Unexpected status request: " + url);
     }));
     const result = await runAzureHubTool("localmcp_hub_status", { project: "Project A", run_id: 991 }, cachedAccount, "azure", env());
@@ -131,7 +132,7 @@ describe("Azure DevOps Hub provider", () => {
     const calls: any[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
       const url = String(input); calls.push({ url, init });
-      if (url.includes("/runs/991?")) return Response.json({ id: 991, state: "inProgress" });
+      if (url.includes("/_apis/build/builds/991?")) return Response.json({ id: 991, status: "inProgress", templateParameters: { os: "linux" } });
       if (url.includes("/builds/991/timeline?")) return Response.json({ records: [] });
       if (url.includes("/builds/991") && init.method === "PATCH") return Response.json({ id: 991, status: "cancelling" });
       throw new Error("Unexpected stop request: " + url);
