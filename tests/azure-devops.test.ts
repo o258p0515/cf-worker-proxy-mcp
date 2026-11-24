@@ -61,7 +61,7 @@ describe("Azure DevOps Hub provider", () => {
     }));
     const accountWithoutHubUrl = { ...account, localmcpgo_secrets: { ...account.localmcpgo_secrets, HUB_URLS: "" } };
     const result = await runAzureHubTool("localmcp_hub_start", { project: "Project A", repository: "runner-config", os: "linux", runner_tags: "go,build", duration_seconds: 9000 }, accountWithoutHubUrl, "azure", env());
-    expect(result).toMatchObject({ provider: "azure", run_id: 991, runner_id: "az-linux-991", os: "linux", duration_seconds: 3300, state: "running" });
+    expect(result).toMatchObject({ provider: "azure", run_id: 991, runner_id: "az-linux-991", os: "linux", duration_seconds: 3300, state: "running", secret_variables: ["HUB_URLS", "MCP_TOKEN"] });
     const yamlPush = calls.find(c => c.url.includes("/_apis/git/repositories/repo-id/pushes"));
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("LOCALMCP_HUB_RUNNER_TEMPLATE: v3");
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("$(runner_vm_image)");
