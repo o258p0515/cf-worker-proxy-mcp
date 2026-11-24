@@ -4,11 +4,13 @@ import { handleStreamableHttp } from "./mcp/streamable-http";
 import { SseSessionDO } from "./mcp/sse-session-do";
 import { swaggerPage, handleApiRpc } from "./api/swagger";
 import { MCP_VERSION } from "./version";
+import { handleGitCredential } from "./mcp/git-credential";
 const cors={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET, POST, DELETE, OPTIONS","Access-Control-Allow-Headers":"Authorization, Content-Type, Accept, X-API-Key, X-GitHub-Account, Mcp-Session-Id, MCP-Protocol-Version, X-API-Passphrase, X-API-Client-Id, X-API-Client-Secret","Access-Control-Expose-Headers":"Mcp-Session-Id, X-MCP-Version"};
 function withCors(r:Response){const h=new Headers(r.headers);for(const [k,v] of Object.entries(cors))h.set(k,v);h.set("X-MCP-Version",MCP_VERSION);return new Response(r.body,{status:r.status,statusText:r.statusText,headers:h});}
 export default {async fetch(req:Request,env:Env):Promise<Response>{
  const u=new URL(req.url),path=u.pathname;
  if(req.method==="OPTIONS")return withCors(new Response(null,{status:204}));
+ if(path==="/internal/runner/git-credential")return withCors(await handleGitCredential(req,env));
  if(req.method==="GET"&&path==="/health")return withCors(Response.json({status:"ok",service:"github-mcp-proxy",version:MCP_VERSION}));
  if(req.method==="GET"&&path==="/version")return withCors(Response.json({name:"github-mcp-proxy",version:MCP_VERSION,timezone:"Asia/Ho_Chi_Minh",format:"v.YY.MMDD.HHmm"}));
  if(path==="/api"||path==="/api/"){if(req.method==="GET")return withCors(swaggerPage());return withCors(new Response("Method Not Allowed",{status:405}));}
