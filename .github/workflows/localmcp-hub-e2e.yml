@@ -1,8 +1,5 @@
 name: LocalMCP Hub Proxy E2E
 on:
-  push:
-    branches: [feature/issue-68-azure-devops-runner]
-    paths: ['.github/workflows/localmcp-hub-e2e.yml', 'scripts/azure-preview-e2e.mjs']
   workflow_dispatch:
 permissions:
   contents: read
@@ -14,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      PREVIEW_DOMAIN: https://github-mcp-proxy-issue68-preview.localmcpcoder-5b1b15.workers.dev
+      MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
       MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
     steps:
       - uses: actions/checkout@v4
@@ -24,9 +21,9 @@ jobs:
       - name: Validate Proxy and Hub credentials
         run: |
           set -euo pipefail
-          test -n "$PREVIEW_DOMAIN"
+          test -n "$MCP_DOMAIN"
           test -n "$MCP_TOKEN"
-          node --check scripts/azure-preview-e2e.mjs
-      - name: Provision, verify and clean up Azure Linux and Windows runners through the isolated preview
-        run: node scripts/azure-preview-e2e.mjs
-   32
+          node --check scripts/localmcp-hub-e2e.mjs
+      - name: Start, route and stop two runners through the production MCP Proxy
+        run: node scripts/localmcp-hub-e2e.mjs
+   29
