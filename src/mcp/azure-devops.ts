@@ -165,6 +165,16 @@ async function ensureVariableGroup(ctx: AzureContext, project: Project, alias: s
   await request(ctx, "/" + encodeURIComponent(project.id) + "/_apis/pipelines/pipelinepermissions/variablegroup/" + group.id, { method: "PATCH", body: JSON.stringify({ pipelines: [{ id: pipelineId, authorized: true }] }) }, "7.1-preview.1");
   return { id: Number(group.id), name: groupName, secret_values_returned: false, authorized: true, pipeline_id: pipelineId };
 }
+async function ensureVariableGroup(ctx: AzureContext, project: Project, alias: string, hubUrls: string, token: string, pipelineId: number) {
+  const groupName = "LocalMCP-Hub-" + alias.replace(/[^A-Za-z0-9_.-]/g, "-");
+  const query = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/distributedtask/variablegroups?groupName=" + encodeURIComponent(groupName), {}, "7.1");
+  let group = (query.value || []).find((v: any) => v.name === groupName);
+  const payload = { name: groupName, type: "Vsts", description: "LocalMCP Hub runtime credentials for account " + alias, variables: { HUB_URLS: { value: hubUrls, isSecret: true }, MCP_TOKEN: { value: token, isSecret: true } }, variableGroupProjectReferences: [{ name: groupName, projectReference: { id: project.id, name: project.name } }] };
+  if (group) group = await request(ctx, "/_apis/distributedtask/variablegroups/" + group.id, { method: "PUT", body: JSON.stringify({ ...group, ...payload }) }, "7.1");
+  else group = await request(ctx, "/_apis/distributedtask/variablegroups", { method: "POST", body: JSON.stringify(payload) }, "7.1");
+  await request(ctx, "/" + encodeURIComponent(project.id) + "/_apis/pipelines/pipelinepermissions/variablegroup/" + group.id, { method: "PATCH", body: JSON.stringify({ pipelines: [{ id: pipelineId, authorized: true }] }) }, "7.1-preview.1");
+  return { id: Number(group.id), name: groupName, secret_values_returned: false, authorized: true, pipeline_id: pipelineId };
+}
 function pipelineStatus(run: any) {
   const rawState = String(run.state || "unknown").toLowerCase();
   const state = rawState === "inprogress" ? "running" : rawState === "canceling" ? "cancelling" : rawState;
