@@ -173,9 +173,18 @@ async function ensureVariableGroup(ctx: AzureContext, project: Project, alias: s
 
 function pipelineStatus(run: any) {
   const rawStatus = String(run.status || run.state || "unknown").toLowerCase();
-  const state = rawStatus === "notstarted" ? "queued" : rawStatus === "inprogress" ? "running" : rawStatus === "canceling" ? "cancelling" : rawStatus;
+  const state = rawStatus === "notstarted" ? "queued" : rawStatus === "inprogress" ? "running" : rawStatus === "canceling" || rawStatus === "cancelling" ? "cancelling" : rawStatus;
   const result = String(run.result || "").toLowerCase();
-  return { id: Number(run.id), name: run.buildNumber || run.name || run.definition?.name, state, result: result || null, status: state === "completed" ? (result || "completed") : state, created_at: run.queueTime || run.createdDate, started_at: run.startTime || run.startedDate, finished_at: run.finishTime || run.finishedDate, templateParameters: run.templateParameters, url: run._links?.web?.href || run.url };
+  let templateParameters = run.templateParameters;
+  if (!templateParameters && typeof run.parameters === "string") {
+    try {
+      const parsed = JSON.parse(run.parameters);
+      templateParameters = parsed?.templateParameters || parsed;
+    } catch { templateParameters = undefined; }
+  } else if (!templateParameters && run.parameters && typeof run.parameters === "object") {
+    templateParameters = run.parameters.templateParameters || run.parameters;
+  }
+  return { id: Number(run.id), name: run.buildNumber || run.name || run.definition?.name, state, result: result || null, status: state === "completed" ? (result || "completed") : state, created_at: run.queueTime || run.createdDate, started_at: run.startTime || run.startedDate, finished_at: run.finishTime || run.finishedDate, templateParameters, runner_name: templateParameters?.runner_name, url: run._links?.web?.href || run.url };
 }
 async function findHubRunner(account: RtdbAccount, env: any, authContext: AuthContext, runnerId: string) {
   try {
