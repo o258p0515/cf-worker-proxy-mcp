@@ -58,6 +58,10 @@ export async function handleGitCredential(req: Request, env: Env): Promise<Respo
       audit({ account: alias, operation, repository: repositoryKey, ...identity, request_id: req.headers.get("cf-ray") || "unknown", decision: "denied", reason: "account_unavailable" });
       return reply({ error: "account_unavailable" }, 404);
     }
+    if (!result.account.token) {
+      audit({ account: alias, username: result.account.username, operation, repository: repositoryKey, ...identity, request_id: req.headers.get("cf-ray") || "unknown", decision: "denied", reason: "github_credential_not_configured" });
+      return reply({ error: "github_credential_not_configured" }, 403);
+    }
     const allowedRepositories = (result.account.git_repositories ?? []).map((value) => value.trim().toLowerCase());
     if (!allowedRepositories.includes(repositoryKey)) {
       audit({ account: alias, username: result.account.username, operation, repository: repositoryKey, ...identity, request_id: req.headers.get("cf-ray") || "unknown", decision: "denied", reason: "repository_not_allowlisted" });
