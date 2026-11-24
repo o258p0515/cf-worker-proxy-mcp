@@ -66,7 +66,14 @@ if (errors.length) {
   process.exit(1);
 }
 
-const hasAccounts = value => !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).some(a => a?.token && String(a.token).trim() && a.enabled !== false);
+const hasAccounts = value => !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).some(a => {
+  if (!a || a.enabled === false) return false;
+  const secrets = a.localmcpgo_secrets && typeof a.localmcpgo_secrets === "object" ? a.localmcpgo_secrets : {};
+  const github = typeof a.token === "string" && !!a.token.trim();
+  const azure = typeof secrets.AZURE_DEVOPS_PAT === "string" && !!secrets.AZURE_DEVOPS_PAT.trim()
+    && typeof secrets.AZURE_DEVOPS_ORG_URL === "string" && !!secrets.AZURE_DEVOPS_ORG_URL.trim();
+  return github || azure;
+});
 async function fetchRtdbAccounts(url, accessToken) {
   const primary = new URL(url);
   if (accessToken) primary.searchParams.set("access_token", accessToken);
@@ -123,8 +130,14 @@ try {
   }
   const { data, selectedPath } = await fetchRtdbAccounts(rtdbUrl, accessToken);
   if (!hasAccounts(data)) throw new Error("RTDB " + selectedPath + " has no enabled GitHub account records");
-  const enabledAccounts = Object.values(data).filter(account => account?.token && account.enabled !== false).length;
-  console.log("[PRE-FLIGHT CHECK PASSED] Cloudflare hostname and RTDB verified; mode=" + (mode || "legacy_auth_fallback") + "; enabled accounts=" + enabledAccounts + ". Secrets were not printed.");
+  const enabledAccounts = Object.values(data).filter(account => {
+    if (!account || account.enabled === false) return false;
+    const secrets = account.localmcpgo_secrets && typeof account.localmcpgo_secrets === "object" ? account.localmcpgo_secrets : {};
+    return (typeof account.token === "string" && !!account.token.trim())
+      || (typeof secrets.AZURE_DEVOPS_PAT === "string" && !!secrets.AZURE_DEVOPS_PAT.trim()
+        && typeof secrets.AZURE_DEVOPS_ORG_URL === "string" && !!secrets.AZURE_DEVOPS_ORG_URL.trim());
+  }).length;
+  console.log("[PRE-FLIGHT CHECK PASSED] Cloudflare hostname and RTDB verified; mode=" + (mode || "legacy_auth_fallback") + "; enabled supported accounts=" + enabledAccounts + ". Secrets were not printed.");
   warnings.forEach(warning => console.warn("WARNING: " + warning));
 } catch (error) {
   console.error("[PRE-FLIGHT CHECK FAILED] " + (error instanceof Error ? error.message : "Live check failed") + "; credentials and RTDB values were redacted.");
