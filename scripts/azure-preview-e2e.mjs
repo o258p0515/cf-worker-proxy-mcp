@@ -78,9 +78,12 @@ async function runOne(os) {
     if (runId > 0) {
       await call("localmcp_hub_stop", { provider: "azure", project, run_id: runId, runner_id: runnerId });
       let finalStatus;
-      for (let attempt = 0; attempt < 18; attempt++) {
+      for (let attempt = 0; attempt < 60; attempt++) {
         finalStatus = await call("localmcp_hub_status", { provider: "azure", project, run_id: runId, runner_id: runnerId });
         if (finalStatus.state === "completed" && finalStatus.runner_online !== true) break;
+        if (attempt > 0 && attempt % 12 === 0) {
+          await call("localmcp_hub_stop", { provider: "azure", project, run_id: runId, runner_id: runnerId });
+        }
         await sleep(5000);
       }
       console.log("Azure runner cleanup: " + JSON.stringify({ os, run_id: runId, state: finalStatus?.state, result: finalStatus?.result, runner_online: finalStatus?.runner_online }));
