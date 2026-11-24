@@ -37,6 +37,7 @@ function normalize(raw: unknown): Record<string, RtdbAccount> {
       token: account.token,
       description: String(account.description || ""),
       orgs: Array.isArray(account.orgs) ? account.orgs.map(String) : [],
+      git_repositories: Array.isArray(account.git_repositories) ? account.git_repositories.map(String) : [],
       enabled: account.enabled !== false,
       readonly: account.readonly === true,
       is_catalog_source: account.is_catalog_source === true,
