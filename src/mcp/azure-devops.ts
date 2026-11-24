@@ -68,7 +68,7 @@ async function request(ctx: AzureContext, path: string, init: RequestInit = {}, 
   const raw = await response.text();
   let body: any = {};
   try { body = raw ? JSON.parse(raw) : {}; } catch { body = raw; }
-  if (!response.ok) throw safeError(response.status, body, response.headers.get("Retry-After"));
+  if (!response.ok) throw new Error("Azure DevOps " + method + " " + path + ": " + safeError(response.status, body, response.headers.get("Retry-After")).message);
   return body;
 }
 async function fingerprint(ctx: AzureContext) {
