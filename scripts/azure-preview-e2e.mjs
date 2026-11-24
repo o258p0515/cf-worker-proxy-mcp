@@ -3,7 +3,7 @@ const token = String(process.env.MCP_TOKEN || "");
 const alias = "azure-aerielaaeriel651971";
 const project = "me";
 const repository = "me";
-const sourceRef = "feature/issue-68-azure-devops-runner";
+const sourceRef = "main";
 if (!endpoint.startsWith("https://") || token.length < 16) throw new Error("Preview endpoint or MCP_TOKEN is not configured.");
 let rpcId = 0;
 async function call(name, args = {}) {
