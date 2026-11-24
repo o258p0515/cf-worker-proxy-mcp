@@ -1,5 +1,8 @@
 name: LocalMCP Hub Proxy E2E
 on:
+  push:
+    branches: [feature/issue-68-azure-devops-runner]
+    paths: ['.github/workflows/localmcp-hub-e2e.yml', 'scripts/azure-preview-e2e.mjs']
   workflow_dispatch:
 permissions:
   contents: read
@@ -26,4 +29,4 @@ jobs:
           node --check scripts/azure-preview-e2e.mjs
       - name: Provision, verify and clean up Azure Linux and Windows runners through the isolated preview
         run: node scripts/azure-preview-e2e.mjs
-   29
+   32
