@@ -283,13 +283,13 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
       : (String(run.templateParameters?.os || "linux") === "windows" ? "az-win-" : "az-linux-") + runId;
     const hubState = await findHubRunner(account, env, authContext, runnerId);
     const runStatus = pipelineStatus(run);
-    const effectiveStatus = runStatus.state === "running" && !hubState.online ? "queued" : runStatus.status;
+    const effectiveStatus = runStatus.state === "running" && !hubState.online ? "starting" : runStatus.status;
     const records = await timelineRecords(ctx, project, runId);
     return { provider: "azure", account: alias, project: project.name, pipeline_id: pipeline!.id, run_id: runId, runner_id: runnerId, ...runStatus, status: effectiveStatus, runner_online: hubState.online, runner_never_connected: runStatus.state === "completed" && !hubState.runner, hub_runner: hubState.runner, timeline: timelineSummary(records), ...(hubState.error ? { hub_error: hubState.error } : {}), note: "Azure Pipeline state and Hub runner registration are joined at read time; only a registered online Hub runner is ready for MCP execution." };
   }
   if (name === "localmcp_hub_stop") {
     const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId);
-    if (String(run.state).toLowerCase() === "completed") return { provider: "azure", run_id: runId, cancel_requested: false, reason: "Pipeline run is already completed." };
+    if (String(run.status || run.state).toLowerCase() === "completed") return { provider: "azure", run_id: runId, cancel_requested: false, reason: "Pipeline run is already completed." };
     const os = String(run.templateParameters?.os || "linux") === "windows" ? "windows" : "linux";
     const runnerId = typeof args.runner_id === "string" && /^az-(?:linux|win)-[A-Za-z0-9-]+$/.test(args.runner_id) ? args.runner_id : (os === "windows" ? "az-win-" : "az-linux-") + runId;
     try {
