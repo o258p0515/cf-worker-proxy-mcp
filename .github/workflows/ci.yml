@@ -25,7 +25,7 @@ jobs:
       - name: Unit tests
         run: npm test
       - name: Live Azure DevOps E2E on isolated preview
-        if: github.event_name == 'pull_request' && github.head_ref == 'feature/issue-68-azure-devops-runner'
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'feature/issue-68-')
         timeout-minutes: 25
         env:
           PREVIEW_DOMAIN: https://github-mcp-proxy-issue68-preview.localmcpcoder-5b1b15.workers.dev
