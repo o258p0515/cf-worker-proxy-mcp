@@ -259,14 +259,14 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
   if (name === "localmcp_hub_stop") {
     const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline!.id + "/runs/" + runId);
     if (String(run.state).toLowerCase() === "completed") return { provider: "azure", run_id: runId, cancel_requested: false, reason: "Pipeline run is already completed." };
-    await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline!.id + "/runs/" + runId, { method: "PATCH", body: JSON.stringify({ state: "cancelling" }) });
+    await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId, { method: "PATCH", body: JSON.stringify({ status: "cancelling" }) });
     return { provider: "azure", run_id: runId, cancel_requested: true };
   }
   if (name === "localmcp_hub_logs") {
     const logId = Number(args.log_id);
     if (!Number.isSafeInteger(logId) || logId <= 0) {
       const [logs, records] = await Promise.all([
-        request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline!.id + "/runs/" + runId + "/logs"),
+        request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId + "/logs"),
         timelineRecords(ctx, project, runId)
       ]);
       return { provider: "azure", account: alias, project: project.name, pipeline_id: pipeline!.id, run_id: runId, logs: logs.value || [], timeline: timelineSummary(records), note: "Supply log_id to read log content. Logs are fetched statelessly in bounded line ranges; timeline entries identify the job and step associated with each log." };
@@ -274,7 +274,7 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
     const startLine = Math.max(1, Math.floor(Number(args.start_line || 1)));
     const endLine = Math.min(startLine + MAX_LOG_LINES - 1, Math.max(startLine, Math.floor(Number(args.end_line || startLine + MAX_LOG_LINES - 1))));
     const [content, records] = await Promise.all([
-      request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline!.id + "/runs/" + runId + "/logs/" + logId + "?startLine=" + startLine + "&endLine=" + endLine),
+      request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId + "/logs/" + logId + "?startLine=" + startLine + "&endLine=" + endLine),
       timelineRecords(ctx, project, runId)
     ]);
     const text = typeof content === "string" ? content : JSON.stringify(content);

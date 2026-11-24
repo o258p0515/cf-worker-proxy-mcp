@@ -81,8 +81,8 @@ describe("Azure DevOps Hub provider", () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: any) => {
       const url = String(input); calls.push(url);
-      if (url.includes("/logs/5?")) return new Response("line one\nline two\n", { headers: { "Content-Type": "text/plain" } });
-      if (url.includes("/logs?")) return Response.json({ value: [{ id: 5, url: "https://dev.azure.com/log/5" }] });
+      if (url.includes("/builds/991/logs/5?")) return new Response("line one\nline two\n", { headers: { "Content-Type": "text/plain" } });
+      if (url.includes("/builds/991/logs?")) return Response.json({ value: [{ id: 5, url: "https://dev.azure.com/log/5" }] });
       throw new Error("Unexpected log request: " + url);
     }));
     const list = await runAzureHubTool("localmcp_hub_logs", { project: "Project A", run_id: 991 }, cachedAccount, "azure", env());
@@ -104,6 +104,26 @@ describe("Azure DevOps Hub provider", () => {
     }));
     const result = await runAzureHubTool("localmcp_hub_status", { project: "Project A", run_id: 991 }, cachedAccount, "azure", env());
     expect(result).toMatchObject({ run_id: 991, runner_id: "az-linux-991", state: "running", status: "running", runner_online: true, hub_runner: { status: "online" } });
+  });
+
+  it("cancels a pipeline run through the verified Build Builds Update API", async () => {
+    const fp = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("https://dev.azure.com/aerielaaeriel651971\n" + PAT));
+    const fingerprint = Array.from(new Uint8Array(fp)).map(v => v.toString(16).padStart(2, "0")).join("");
+    const cached = { fingerprint, discovered_at: Date.now(), projects: [{ id: "project-id", name: "Project A" }], repositories: { "project-id": [] }, pipelines: { "project-id": [{ id: 77, name: "LocalMCP Hub Runner" }] } };
+    const cachedAccount = { ...account, localmcpgo_cache: { azure_devops: cached } };
+    const calls: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
+      const url = String(input); calls.push({ url, init });
+      if (url.includes("/runs/991?")) return Response.json({ id: 991, state: "inProgress" });
+      if (url.includes("/builds/991/timeline?")) return Response.json({ records: [] });
+      if (url.includes("/builds/991") && init.method === "PATCH") return Response.json({ id: 991, status: "cancelling" });
+      throw new Error("Unexpected stop request: " + url);
+    }));
+    const result = await runAzureHubTool("localmcp_hub_stop", { project: "Project A", run_id: 991 }, cachedAccount, "azure", env());
+    expect(result).toMatchObject({ run_id: 991, cancel_requested: true });
+    const cancel = calls.find(c => c.init.method === "PATCH");
+    expect(cancel.url).toContain("/_apis/build/builds/991?");
+    expect(JSON.parse(cancel.init.body)).toEqual({ status: "cancelling" });
   });
 
   it("requires explicit project selection without fanning out API calls across every project", async () => {
@@ -150,4 +170,4 @@ describe("Azure DevOps Hub provider", () => {
   });
 
 });
-  153
+  173
