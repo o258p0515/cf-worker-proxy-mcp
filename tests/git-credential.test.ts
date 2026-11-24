@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleGitCredential } from "../src/mcp/git-credential";
+import worker from "../src/index";
 import { clearAccountCaches } from "../src/rtdb/account-store";
 
 function kv() {
@@ -50,6 +51,12 @@ describe("internal Git credential provider", () => {
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "unauthorized" });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not attach wildcard CORS to the internal credential route", async () => {
+    const response = await worker.fetch(new Request("https://proxy.test/internal/runner/git-credential", { method: "OPTIONS", headers: { Origin: "https://attacker.example" } }), makeEnv());
+    expect(response.status).toBe(405);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 
   it("rejects methods other than POST", async () => {
