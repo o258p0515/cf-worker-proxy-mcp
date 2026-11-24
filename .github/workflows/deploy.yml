@@ -4,6 +4,13 @@ on:
     branches: [main]
     paths-ignore: ['deployment-status.json', '.github/localmcp-smoke.trigger']
   workflow_dispatch:
+    inputs:
+      azure_runner_os:
+        description: "OS to verify through the live Azure DevOps runner"
+        required: false
+        type: choice
+        options: [linux, windows]
+        default: linux
 permissions:
   contents: write
 concurrency:
@@ -195,7 +202,15 @@ jobs:
           echo "$SELECT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||r.result?.isError)process.exit(1)})'
           TOOLS=$(curl --fail --silent --show-error -X POST "$PREVIEW_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":5,"method":"tools/list","params":{}}')
           echo "$TOOLS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const n=(r.result?.tools||[]).map(x=>x.name);if(n.includes("get_me")||!n.includes("localmcp_hub_logs")||!n.includes("localmcp_hub_start"))process.exit(1);console.log("Preview Azure-only tool catalog passed")})'
+      - name: Live Azure DevOps runner end-to-end test
+        if: github.ref_name == 'feature/issue-68-azure-devops-runner'
+        timeout-minutes: 15
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          AZURE_RUNNER_OS: ${{ inputs.azure_runner_os || 'linux' }}
+        run: node scripts/azure-preview-e2e.mjs
       - name: Record preview endpoint
         if: always()
         run: |
           if [ -n "${PREVIEW_DOMAIN:-}" ]; then echo "Preview URL: $PREVIEW_DOMAIN/mcp" >> "$GITHUB_STEP_SUMMARY"; fi
+  216
