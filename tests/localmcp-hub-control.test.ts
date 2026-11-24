@@ -24,13 +24,13 @@ describe("separate LocalMCP Hub lifecycle controls", () => {
     });
     vi.stubGlobal("fetch", fetch);
     secretTool.mockImplementation(async (name: string) => name === "list_github_secrets" ? { secrets: [{ name: "MCP_TOKEN" }] } : { updated: true });
-    const result = await runLocalMcpHubControlTool("localmcp_hub_start", { runner_name: "build-01", runner_tags: "linux,go", duration_seconds: 3600 }, account);
+    const result = await runLocalMcpHubControlTool("localmcp_hub_start", { runner_name: "build-01", runner_tags: "linux,go", duration_seconds: 3600 }, account, "", "personal");
     expect(result.dispatched).toBe(true);
     expect(result.runner_name).toBe("build-01");
     expect(secretTool.mock.calls.filter(call => call[0] === "set_github_secret").map(call => call[1].secret_name)).toEqual(["HUB_URLS", "MCP_TOKEN"]);
     expect(secretTool.mock.calls.filter(call => call[0] === "set_github_secret").map(call => call[1].value)).toEqual(["https://hub.example.com", "shared-token-0123456789abcdef"]);
     const dispatch = calls.find(call => call.url.endsWith("/dispatches"));
-    expect(JSON.parse(dispatch?.init.body).inputs).toEqual({ runner_name: "build-01", runner_tags: "linux,go", duration_seconds: "3600" });
+    expect(JSON.parse(dispatch?.init.body).inputs).toEqual({ runner_name: "build-01", runner_tags: "linux,go", duration_seconds: "3600", runner_os: "linux", account_alias: "personal" });
     expect(dispatch?.init.method).toBe("POST");
   });
 
@@ -61,4 +61,9 @@ describe("separate LocalMCP Hub lifecycle controls", () => {
     await expect(runLocalMcpHubControlTool("localmcp_hub_start", { duration_seconds: 999999 }, account))
       .rejects.toThrow(/duration_seconds/);
   });
+  it("requires explicit provider selection when an account has both GitHub and Azure credentials", async () => {
+    const both = { ...account, localmcpgo_secrets: { ...account.localmcpgo_secrets, AZURE_DEVOPS_PAT: "unit-secret-azure-123456", AZURE_DEVOPS_ORG_URL: "https://dev.azure.com/example" } };
+    await expect(runLocalMcpHubControlTool("localmcp_hub_check_secrets", {}, both as any)).rejects.toThrow(/multiple providers.*provider='github'.*provider='azure'/i);
+  });
+
 });
