@@ -58,14 +58,15 @@ describe("Azure DevOps Hub provider", () => {
       if (url.includes("pipelinepermissions/variablegroup")) return Response.json({ authorized: true });
       throw new Error("Unexpected Azure test request: " + url);
     }));
-    const result = await runAzureHubTool("localmcp_hub_start", { project: "Project A", repository: "runner-config", os: "linux", runner_tags: "go,build", duration_seconds: 9000 }, account, "azure", env());
+    const accountWithoutHubUrl = { ...account, localmcpgo_secrets: { ...account.localmcpgo_secrets, HUB_URLS: "" } };
+    const result = await runAzureHubTool("localmcp_hub_start", { project: "Project A", repository: "runner-config", os: "linux", runner_tags: "go,build", duration_seconds: 9000 }, accountWithoutHubUrl, "azure", env());
     expect(result).toMatchObject({ provider: "azure", run_id: 991, runner_id: "az-linux-991", os: "linux", duration_seconds: 3300, state: "running" });
     const yamlPush = calls.find(c => c.url.includes("/_apis/git/repositories/repo-id/pushes"));
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("LOCALMCP_HUB_RUNNER_TEMPLATE: v1");
     const groupWrite = calls.find(c => c.url.includes("/_apis/distributedtask/variablegroups") && c.init.method === "POST");
     const variables = JSON.parse(groupWrite.init.body).variables;
     expect(variables.MCP_TOKEN).toMatchObject({ value: TOKEN, isSecret: true });
-    expect(variables.HUB_URLS).toMatchObject({ value: "https://hub.example.test", isSecret: true });
+    expect(variables.HUB_URLS).toMatchObject({ value: "https://hub.o258p0515.dpdns.org", isSecret: true });
     const runWrite = calls.find(c => c.url.includes("/runs?") && c.init.method === "POST");
     expect(JSON.parse(runWrite.init.body).templateParameters.source_ref).toBe("main");
     expect(JSON.stringify(result)).not.toContain(PAT);
@@ -149,3 +150,4 @@ describe("Azure DevOps Hub provider", () => {
   });
 
 });
+  153

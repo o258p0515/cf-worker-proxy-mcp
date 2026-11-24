@@ -50,10 +50,21 @@ describe("separate LocalMCP Hub lifecycle controls", () => {
     expect(writes[1]?.[1]?.value).toBe("proxy-runtime-token-0123456789");
   });
 
-  it("refuses to start Hub runners if Hub URL is missing", async () => {
-    await expect(runLocalMcpHubControlTool("localmcp_hub_start", {}, { ...account, localmcpgo_secrets: { MCP_TOKEN: "x" } }))
-      .rejects.toThrow(/HUB_URLS/);
-    expect(secretTool).not.toHaveBeenCalled();
+  it("uses the built-in Hub URL when RTDB and Proxy environment omit HUB_URLS", async () => {
+    const calls: Array<{ url: string; init?: any }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init?: any) => {
+      const url = String(input); calls.push({ url, init });
+      if (url.endsWith("/actions/workflows/hub-runner.yml")) return Response.json({ id: 123, path: ".github/workflows/hub-runner.yml", state: "active" });
+      if (url.includes("/actions/workflows/hub-runner.yml/runs")) return Response.json({ workflow_runs: [] });
+      if (url === "https://api.github.com/repos/o258p0515/localmcpcoder-go") return Response.json({ default_branch: "main" });
+      if (url.endsWith("/dispatches")) return new Response(null, { status: 204 });
+      throw new Error("Unexpected request " + url);
+    }));
+    secretTool.mockImplementation(async (name: string) => name === "list_github_secrets" ? { secrets: [] } : { updated: true });
+    await runLocalMcpHubControlTool("localmcp_hub_start", {}, { ...account, localmcpgo_secrets: { MCP_TOKEN: "shared-token-0123456789abcdef" } }, "", "personal");
+    const writes = secretTool.mock.calls.filter(call => call[0] === "set_github_secret");
+    expect(writes[0]?.[1]?.secret_name).toBe("HUB_URLS");
+    expect(writes[0]?.[1]?.value).toBe("https://hub.o258p0515.dpdns.org");
   });
 
   it("validates runner lifetime and does not dispatch an invalid request", async () => {
@@ -67,3 +78,4 @@ describe("separate LocalMCP Hub lifecycle controls", () => {
   });
 
 });
+   81
