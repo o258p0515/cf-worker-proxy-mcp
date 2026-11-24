@@ -157,4 +157,27 @@ describe("Firebase account store", () => {
     expect(e.CACHE_KV.values.has("rtdb:accounts:v1")).toBe(false);
   });
 
+  it("accepts Azure-only accounts without inventing a GitHub token", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      "azure-aerielaaeriel651971": {
+        username: "aerielaaeriel651971", enabled: true, readonly: false,
+        localmcpgo_secrets: {
+          AZURE_DEVOPS_PAT: "unit-secret-azure-123456",
+          AZURE_DEVOPS_ORG_URL: "https://dev.azure.com/aerielaaeriel651971"
+        }
+      }
+    })));
+    const e = env();
+    const accounts = await getAccounts(e);
+    expect(accounts["azure-aerielaaeriel651971"]?.token).toBe("");
+    expect((await listPublicAccounts(e))[0]).toMatchObject({ alias: "azure-aerielaaeriel651971", providers: ["azure"] });
+    expect(JSON.stringify(await listPublicAccounts(e))).not.toContain("unit-secret-azure-123456");
+  });
+
+  it("rejects incomplete Azure credentials when no GitHub token exists", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ azure: { username: "azure", enabled: true, localmcpgo_secrets: { AZURE_DEVOPS_PAT: "pat-only" } } })));
+    const e = env();
+    await expect(getAccounts(e)).rejects.toThrow(/no enabled GitHub or Azure DevOps account/i);
+  });
+
 });

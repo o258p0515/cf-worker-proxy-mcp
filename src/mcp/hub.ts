@@ -23,13 +23,16 @@ async function sessionId(ctx: AuthContext): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", source);
   return Array.from(new Uint8Array(digest)).map(value => value.toString(16).padStart(2, "0")).join("").slice(0, 40);
 }
-function hubConfig(account: RtdbAccount, fallbackToken = "") {
+const DEFAULT_HUB_URL = "https://hub.o258p0515.dpdns.org";
+function hubConfig(account: RtdbAccount, fallbackToken = "", fallbackOrigin = "") {
   const configured = secrets(account);
   const token = configured.MCP_TOKEN || fallbackToken;
-  const urls = hubUrls(account).map(validateHubUrl);
+  const configuredUrls = hubUrls(account);
+  const fallbackUrls = String(fallbackOrigin || DEFAULT_HUB_URL).split(",").map(value => value.trim()).filter(Boolean);
+  const urls = (configuredUrls.length ? configuredUrls : fallbackUrls).map(validateHubUrl);
   if (!token) throw new Error("MCP_TOKEN is not available to the Proxy for Hub authentication. Configure it in RTDB localmcpgo_secrets or align the Proxy MCP_TOKEN with the Hub MCP_TOKEN.");
-  if (!urls.length) throw new Error("HUB_URLS is missing from RTDB localmcpgo_secrets.");
-  return { token, urls };
+  if (!urls.length) throw new Error("HUB_URLS is missing and no default Hub origin is configured.");
+  return { token, urls, url_source: configuredUrls.length ? "RTDB localmcpgo_secrets" : fallbackOrigin ? "Proxy LOCALMCP_HUB_ORIGIN" : "built-in default" };
 }
 async function hubFetch(base: string, path: string, init: RequestInit, service?: Fetcher, serviceOrigin?: string): Promise<Response> {
   if (service && serviceOrigin && new URL(base).origin === new URL(serviceOrigin).origin) {
@@ -53,7 +56,7 @@ async function requestHub(base: string, token: string, session: string, rpc: Rec
 }
 export async function getHubTools(account: RtdbAccount, ctx: AuthContext, fallbackToken = "", service?: Fetcher, serviceOrigin?: string): Promise<McpTool[]> {
   let configured: ReturnType<typeof hubConfig>;
-  try { configured = hubConfig(account, fallbackToken); } catch { return HUB_META_TOOLS.map(tool => ({ ...tool, name: HUB_TOOL_PREFIX + tool.name, description: "LocalMCP Hub: " + tool.description })); }
+  try { configured = hubConfig(account, fallbackToken, serviceOrigin); } catch { return HUB_META_TOOLS.map(tool => ({ ...tool, name: HUB_TOOL_PREFIX + tool.name, description: "LocalMCP Hub: " + tool.description })); }
   const fallback = HUB_META_TOOLS.map(tool => ({ ...tool, name: HUB_TOOL_PREFIX + tool.name, description: "LocalMCP Hub: " + tool.description }));
   const session = await sessionId(ctx);
   for (const base of configured.urls) {
@@ -68,7 +71,7 @@ export async function getHubTools(account: RtdbAccount, ctx: AuthContext, fallba
 export async function callHubTool(name: string, args: Record<string, unknown>, account: RtdbAccount, ctx: AuthContext, fallbackToken = "", service?: Fetcher, serviceOrigin?: string) {
   const toolName = name.startsWith(HUB_TOOL_PREFIX) ? name.slice(HUB_TOOL_PREFIX.length) : name;
   if (!toolName || !/^[A-Za-z0-9_.-]{1,128}$/.test(toolName)) throw new Error("Invalid LocalMCP Hub tool name.");
-  const { token, urls } = hubConfig(account, fallbackToken);
+  const { token, urls } = hubConfig(account, fallbackToken, serviceOrigin);
   const session = await sessionId(ctx);
   const failures: string[] = [];
   for (const base of urls) {
@@ -79,7 +82,7 @@ export async function callHubTool(name: string, args: Record<string, unknown>, a
 }
 export async function checkHubConnection(account: RtdbAccount, fallbackToken = "", service?: Fetcher, serviceOrigin?: string) {
   let configured: ReturnType<typeof hubConfig>;
-  try { configured = hubConfig(account, fallbackToken); } catch (error) { return { ready: false, reason: error instanceof Error ? error.message : String(error) }; }
+  try { configured = hubConfig(account, fallbackToken, serviceOrigin); } catch (error) { return { ready: false, reason: error instanceof Error ? error.message : String(error) }; }
   const checks: Array<Record<string, unknown>> = [];
   for (const base of configured.urls) {
     try {

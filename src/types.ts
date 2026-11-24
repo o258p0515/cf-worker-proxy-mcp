@@ -2,6 +2,7 @@ export interface RtdbAccount {
   username: string; token: string; description: string; orgs: string[];
   enabled: boolean; readonly: boolean; is_catalog_source?: boolean;
   localmcpgo_secrets?: Record<string, string>;
+  localmcpgo_cache?: Record<string, unknown>;
   git_repositories?: string[];
 }
 export interface Env {

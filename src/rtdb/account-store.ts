@@ -22,7 +22,11 @@ function hasEnabledAccounts(raw: unknown): boolean {
   return !!raw && typeof raw === "object" && !Array.isArray(raw)
     && Object.values(raw).some(value => {
       const account = value as Partial<RtdbAccount> | null;
-      return !!account && typeof account.token === "string" && !!account.token.trim() && account.enabled !== false;
+      if (!account || account.enabled === false) return false;
+      const secrets = account.localmcpgo_secrets && typeof account.localmcpgo_secrets === "object" ? account.localmcpgo_secrets : {};
+      return (typeof account.token === "string" && !!account.token.trim())
+        || (typeof secrets.AZURE_DEVOPS_PAT === "string" && !!secrets.AZURE_DEVOPS_PAT.trim()
+          && typeof secrets.AZURE_DEVOPS_ORG_URL === "string" && !!secrets.AZURE_DEVOPS_ORG_URL.trim());
     });
 }
 
@@ -31,19 +35,23 @@ function normalize(raw: unknown): Record<string, RtdbAccount> {
   const out: Record<string, RtdbAccount> = {};
   for (const [alias, value] of Object.entries(raw)) {
     const account = value as Partial<RtdbAccount>;
-    if (!account || typeof account.token !== "string" || !account.token.trim()) continue;
+    const rawSecrets = account?.localmcpgo_secrets && typeof account.localmcpgo_secrets === "object" && !Array.isArray(account.localmcpgo_secrets)
+      ? Object.fromEntries(Object.entries(account.localmcpgo_secrets).filter(([key, value]) => /^[A-Z_][A-Z0-9_]{0,99}$/.test(key) && typeof value === "string" && value.length > 0)) as Record<string, string>
+      : {};
+    const githubToken = typeof account?.token === "string" ? account.token.trim() : "";
+    const azureConfigured = !!rawSecrets.AZURE_DEVOPS_PAT?.trim() && !!rawSecrets.AZURE_DEVOPS_ORG_URL?.trim();
+    if (!account || (!githubToken && !azureConfigured)) continue;
     out[alias] = {
       username: String(account.username || ""),
-      token: account.token,
+      token: githubToken,
       description: String(account.description || ""),
       orgs: Array.isArray(account.orgs) ? account.orgs.map(String) : [],
       git_repositories: Array.isArray(account.git_repositories) ? account.git_repositories.filter((value): value is string => typeof value === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value.trim())).map(value => value.trim()) : [],
       enabled: account.enabled !== false,
       readonly: account.readonly === true,
       is_catalog_source: account.is_catalog_source === true,
-      localmcpgo_secrets: account.localmcpgo_secrets && typeof account.localmcpgo_secrets === "object" && !Array.isArray(account.localmcpgo_secrets)
-        ? Object.fromEntries(Object.entries(account.localmcpgo_secrets).filter(([key, value]) => /^[A-Z_][A-Z0-9_]{0,99}$/.test(key) && typeof value === "string" && value.length > 0))
-        : {}
+      localmcpgo_secrets: rawSecrets,
+      localmcpgo_cache: account.localmcpgo_cache && typeof account.localmcpgo_cache === "object" && !Array.isArray(account.localmcpgo_cache) ? account.localmcpgo_cache as Record<string, unknown> : {}
     };
   }
   return out;
@@ -97,7 +105,7 @@ export async function getAccounts(env: Env, options: { forceRefresh?: boolean } 
   }
   activeRtdbUrl = url;
   const accounts = normalize(raw);
-  if (!Object.values(accounts).some(account => account.enabled)) throw new Error("Firebase RTDB contains no enabled GitHub account with a token at /github_accounts or /env/github_accounts");
+  if (!Object.values(accounts).some(account => account.enabled)) throw new Error("Firebase RTDB contains no enabled GitHub or Azure DevOps account at /github_accounts or /env/github_accounts");
 
   memory = { accounts, expires: Date.now() + ttl * 1000 };
   await env.CACHE_KV.put("rtdb:accounts:v1", await encryptAesGcm(JSON.stringify(accounts), env.MCP_TOKEN), { expirationTtl: ttl });
@@ -110,7 +118,11 @@ export async function listPublicAccounts(env: Env) {
     .filter(([, account]) => account.enabled)
     .map(([alias, account]) => ({
       alias, username: account.username, description: account.description,
-      orgs: account.orgs, readonly: account.readonly
+      orgs: account.orgs, readonly: account.readonly,
+      providers: [
+        ...(account.token ? ["github"] : []),
+        ...(account.localmcpgo_secrets?.AZURE_DEVOPS_PAT && account.localmcpgo_secrets?.AZURE_DEVOPS_ORG_URL ? ["azure"] : [])
+      ]
     }));
 }
 
@@ -120,7 +132,11 @@ export async function resolveAccount(env: Env, alias: string) {
     .filter(([, account]) => account.enabled)
     .map(([key, account]) => ({
       alias: key, username: account.username, description: account.description,
-      orgs: account.orgs, readonly: account.readonly
+      orgs: account.orgs, readonly: account.readonly,
+      providers: [
+        ...(account.token ? ["github"] : []),
+        ...(account.localmcpgo_secrets?.AZURE_DEVOPS_PAT && account.localmcpgo_secrets?.AZURE_DEVOPS_ORG_URL ? ["azure"] : [])
+      ]
     }));
   const account = accounts[alias];
   return account?.enabled
@@ -162,6 +178,23 @@ export async function setLocalMcpSecrets(env: Env, alias: string, secrets: Recor
   if (!response.ok) throw new Error("Firebase RTDB secret configuration write failed (HTTP " + response.status + ")");
   await clearAccountCaches(env);
   return Object.keys(secrets);
+}
+
+export async function setLocalMcpCache(env: Env, alias: string, cache: Record<string, unknown>) {
+  await getAccounts(env, { forceRefresh: true });
+  if (!activeRtdbUrl) throw new Error("RTDB account path could not be resolved");
+  const url = new URL(activeRtdbUrl);
+  url.pathname = url.pathname.replace(/\.json$/, "") + "/" + encodeURIComponent(alias) + "/localmcpgo_cache.json";
+  const serviceAccount = resolveServiceAccountFromEnv(env);
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (serviceAccount) {
+    url.searchParams.delete("auth");
+    headers.set("Authorization", "Bearer " + await googleAccessToken(env));
+  }
+  const response = await fetch(url, { method: "PUT", headers, body: JSON.stringify(cache) });
+  if (!response.ok) throw new Error("Firebase RTDB LocalMCP cache write failed (HTTP " + response.status + ")");
+  await clearAccountCaches(env);
+  return true;
 }
 
 export async function clearAccountCaches(env: Env) {

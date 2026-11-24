@@ -1,0 +1,88 @@
+name: Issue 68 Azure Preview E2E
+on:
+  push:
+    branches:
+      - feature/issue-68-azure-devops-runner
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: issue68-azure-preview-e2e
+  cancel-in-progress: false
+jobs:
+  preview-and-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Validate deployment credentials and RTDB
+        env:
+          CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+          MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          GIT_EXECUTOR_TOKEN: ${{ secrets.GIT_EXECUTOR_TOKEN }}
+          MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
+          MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
+          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
+          FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          RTDB_URL: ${{ secrets.RTDB_URL }}
+          RTDB_AUTH_URL: ${{ secrets.RTDB_AUTH_URL }}
+        run: node scripts/validate-env.mjs
+      - name: Install, typecheck and unit test
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm test
+          node --check scripts/azure-preview-e2e.mjs
+      - name: Prepare isolated Cloudflare preview
+        env:
+          CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+        run: node scripts/prepare-preview.mjs
+      - name: Deploy isolated preview Worker
+        run: npx wrangler deploy --config wrangler.preview.jsonc
+      - name: Sync preview runtime secrets
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          GIT_EXECUTOR_TOKEN: ${{ secrets.GIT_EXECUTOR_TOKEN }}
+          MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
+          MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
+          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
+          RTDB_URL: ${{ secrets.RTDB_URL }}
+          RTDB_AUTH_URL: ${{ secrets.RTDB_AUTH_URL }}
+          FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/sync-secrets.mjs | npx wrangler secret bulk --config wrangler.preview.jsonc
+      - name: Smoke test Azure-only account on isolated preview
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+        run: |
+          set -euo pipefail
+          sleep 5
+          curl --fail --silent --show-error "$PREVIEW_DOMAIN/health" | grep -q '"status":"ok"'
+          UNAUTH=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "$PREVIEW_DOMAIN/mcp" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}')
+          test "$UNAUTH" = "401"
+          TOOLS=$(curl --fail --silent --show-error -X POST "$PREVIEW_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
+          echo "$TOOLS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const n=(r.result?.tools||[]).map(x=>x.name);if(!n.includes("localmcp_hub_start")||!n.includes("localmcp_hub_logs"))process.exit(1);console.log("Preview Hub control tools present")})'
+          ACCOUNTS=$(curl --fail --silent --show-error -X POST "$PREVIEW_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_github_accounts","arguments":{}}}')
+          echo "$ACCOUNTS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const a=JSON.parse(r.result?.content?.[0]?.text||"[]");const x=a.find(v=>v.alias==="azure-aerielaaeriel651971");if(!x||!x.providers?.includes("azure"))process.exit(1);console.log("Azure-only RTDB account discovered without exposing credentials")})'
+      - name: Provision, execute and clean up Azure Linux and Windows runners
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+        run: node scripts/azure-preview-e2e.mjs
+      - name: Record isolated preview and test result
+        if: always()
+        run: |
+          if [ -n "${PREVIEW_DOMAIN:-}" ]; then
+            echo "Preview endpoint: $PREVIEW_DOMAIN/mcp" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

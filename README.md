@@ -1,10 +1,10 @@
 # Cloudflare GitHub MCP Proxy
 
-A Cloudflare Worker that transparently proxies the official GitHub Remote MCP endpoint and selects a GitHub PAT from Firebase Realtime Database for each request. Upstream tool names, descriptions, schemas, annotations, resources, prompts, initialization capabilities and results are forwarded without injecting proxy-specific fields into GitHub tool schemas. It supports Streamable HTTP (/mcp), legacy SSE (/sse and /messages), static token authentication, OAuth 2.1 authorization-code + PKCE, dynamic client registration, and encrypted RTDB caching.
+A Cloudflare Worker that transparently proxies the official GitHub Remote MCP endpoint and selects GitHub or Azure DevOps credentials from Firebase Realtime Database for account-scoped tools. Upstream tool names, descriptions, schemas, annotations, resources, prompts, initialization capabilities and results are forwarded without injecting proxy-specific fields into GitHub tool schemas. It supports Streamable HTTP (/mcp), legacy SSE (/sse and /messages), static token authentication, OAuth 2.1 authorization-code + PKCE, dynamic client registration, and encrypted RTDB caching.
 
-## Selecting a GitHub account
+## Selecting an account
 
-Agents can call `list_github_accounts` to discover enabled aliases, usernames, organizations, and read-only status (credentials are never returned), then call `select_github_account` with the chosen alias. The selection is stored in Durable Object storage for 24 hours and remembered for subsequent calls from that authenticated client; separate OAuth client identities are isolated. Static-token clients share the `admin` identity, so use `X-GitHub-Account` or distinct credentials when static-token clients need separate accounts. The proxy automatically routes repository/organization-scoped calls when exactly one configured account matches the owner, username, or `orgs` metadata. If routing is ambiguous, the error directs the agent to list and select an account. Normal GitHub tool calls without a selected account or a unique owner match are rejected rather than silently falling back to the catalog account. Existing clients can still use `X-GitHub-Account`; the legacy `account` argument is accepted as a routing hint but stripped before forwarding. Official GitHub tool names and schemas remain unchanged; the account-management tools are additive proxy tools.
+Agents can call `list_github_accounts` to discover enabled aliases, usernames, organizations, supported providers (`github` and/or `azure`), and read-only status (credentials are never returned), then call `select_github_account` with the chosen alias. Azure-only accounts do not need a dummy GitHub `token`; GitHub upstream tools remain unavailable for those accounts while Proxy and Hub controls remain available. The selection is stored in Durable Object storage for 24 hours and remembered for subsequent calls from that authenticated client; separate OAuth client identities are isolated. Static-token clients share the `admin` identity, so use `X-GitHub-Account` or distinct credentials when static-token clients need separate accounts. The proxy automatically routes repository/organization-scoped calls when exactly one configured account matches the owner, username, or `orgs` metadata. If routing is ambiguous, the error directs the agent to list and select an account. Normal GitHub tool calls without a selected account or a unique owner match are rejected rather than silently falling back to the catalog account. Existing clients can still use `X-GitHub-Account`; the legacy `account` argument is accepted as a routing hint but stripped before forwarding. Official GitHub tool names and schemas remain unchanged; the account-management tools are additive proxy tools.
 
 ## Endpoints
 
@@ -62,6 +62,19 @@ Create a JSON object at `/github_accounts`. If your Firebase project groups data
     "enabled": true,
     "readonly": false,
     "is_catalog_source": true
+  },
+  "azure-aerielaaeriel651971": {
+    "username": "aerielaaeriel651971",
+    "description": "Azure DevOps - aerielaaeriel651971",
+    "orgs": ["aerielaaeriel651971"],
+    "enabled": true,
+    "readonly": false,
+    "is_catalog_source": false,
+    "localmcpgo_secrets": {
+      "AZURE_DEVOPS_PAT": "AZURE_PAT_REPLACE_ME",
+      "AZURE_DEVOPS_ORG_URL": "https://dev.azure.com/aerielaaeriel651971",
+      "HUB_URLS": "https://hub.o258p0515.dpdns.org"
+    }
   }
 }
 ```
@@ -70,7 +83,7 @@ Recommended RTDB Security Rules: `{ "rules": { ".read": false, ".write": false }
 
 ## LocalMCP Go runner controls
 
-The proxy adds account-scoped LocalMCP Go lifecycle tools. Each RTDB GitHub account may contain a localmcpgo_secrets object with secret-name/value pairs. The account cache in CACHE_KV is encrypted with MCP_TOKEN; public account listings never expose these values. localmcp_configure_secrets merges values into RTDB, while localmcp_reset_secrets force-writes all configured values to GitHub Actions Repository Secrets.
+The proxy adds account-scoped LocalMCP Go lifecycle tools. Each RTDB account may contain a `localmcpgo_secrets` object with secret-name/value pairs. Azure-only accounts are valid when both `AZURE_DEVOPS_PAT` and `AZURE_DEVOPS_ORG_URL` are present; a GitHub `token` is not required. The account cache in CACHE_KV is encrypted with MCP_TOKEN; public account listings never expose these values. localmcp_configure_secrets merges values into RTDB, while localmcp_reset_secrets force-writes all configured values to GitHub Actions Repository Secrets.
 
 localmcp_start checks .github/workflows/example-run.yml, installs the canonical workflow from o258p0515/localmcpcoder-go only if missing, checks which required secret names already exist in GitHub, requires RTDB values only for missing secrets, and writes only those missing repository secrets, avoids duplicate active runs, and dispatches the workflow. The required secret names follow the current LocalMCP Go workflow: CF_API_EMAIL, CF_API_KEY, CF_DOMAIN, MCP_TOKEN, MCP_OAUTH_CLIENT_ID, and MCP_OAUTH_CLIENT_SECRET. MCP_OAUTH_REDIRECT_URIS is no longer required. TS_TRUST_CREDS and TS_TAGS are optional; TUNNEL_TOKEN is generated by the workflow from Cloudflare.
 
@@ -80,4 +93,4 @@ Additional tools: localmcp_check_secrets, localmcp_check_workflow, localmcp_stop
 
 Hub tools are additive and isolated from the legacy direct-runner lifecycle. The Hub tool catalog is exposed with the `hub__` prefix (for example `hub__list_runners`, `hub__select_runner`, and `hub__bash`) so it cannot shadow official GitHub tools or the legacy `localmcp_*` tools. The Proxy uses the selected RTDB account's `localmcpgo_secrets.HUB_URLS` and `MCP_TOKEN` to contact Hub; the same `MCP_TOKEN` authenticates both the Go MCP handler and the Hub runner WebSocket. No `HUB_SHARED_SECRET` is required.
 
-Hub lifecycle controls are separate: `localmcp_hub_start`, `localmcp_hub_stop`, `localmcp_hub_status`, `localmcp_hub_runs`, `localmcp_hub_check_secrets`, and `localmcp_hub_check_connection`. `localmcp_hub_start` syncs only `HUB_URLS` and `MCP_TOKEN` to GitHub Actions secrets and dispatches `.github/workflows/hub-runner.yml` with runner name, tags, and duration. It does not cancel other Hub runners or touch the direct-runner workflow. The Hub runner workflow must be present on the repository's default branch before GitHub accepts `workflow_dispatch`.
+Hub lifecycle controls are separate: `localmcp_hub_start`, `localmcp_hub_stop`, `localmcp_hub_status`, `localmcp_hub_runs`, `localmcp_hub_logs`, `localmcp_hub_check_secrets`, and `localmcp_hub_check_connection`. Pass `provider: "github"` or `provider: "azure"` when the selected account has both providers; the Proxy never guesses. GitHub starts use the repository's `hub-runner.yml`; Azure starts discover projects, Azure Repos repositories and pipelines, bootstrap `azure-pipelines.yml` when needed, create a project-scoped secret Variable Group for `HUB_URLS` and `MCP_TOKEN`, and queue a unique Linux or Windows hosted runner. Azure source code is cloned from `o258p0515/localmcpcoder-go` at `source_ref` (default `main`). Select `project` and `repository` when the organization has more than one candidate. For the current LocalMCP Hub deployment, set `HUB_URLS` to `https://hub.o258p0515.dpdns.org` (base URL only; do not append `/mcp`). The Proxy runtime `MCP_TOKEN` can be reused if the account-level value is absent. Azure PAT needs organization/project read, Code read/write (to bootstrap the pipeline YAML), Pipeline/Build read and execute, and Library/Variable Groups read/manage permissions. PAT values are never returned or logged. Azure hosted jobs are capped at 55 minutes to stay below the 60-minute hosted-job limit; organization hosted parallelism entitlement is still controlled by Azure DevOps and queued runs are not considered online runners. Logs are fetched in stateless line windows of up to 500 lines; each response returns `nextStartLine` and timeline job/step error metadata. The Go runner exposes a bearer-protected shutdown endpoint only on its loopback listener so Windows hosted runners can drain cleanly. GitHub runner instances use unique workflow-run concurrency groups and do not cancel one another.

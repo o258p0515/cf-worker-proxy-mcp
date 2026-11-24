@@ -107,4 +107,47 @@ describe("official GitHub MCP parity", () => {
     expect(response.result.isError).toBe(true); expect(response.result.content[0].text).toContain("read-only");
     expect(calls.some(entry => entry.message.method === "tools/call")).toBe(false);
   });
+  it("serves Proxy controls for an Azure-only account without calling GitHub upstream", async () => {
+    const env = makeEnv(); await clearAccountCaches(env);
+    const calls: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
+      const url = String(input);
+      if (url.includes("unit.firebaseio.com")) return Response.json({
+        "azure-aerielaaeriel651971": { username: "aerielaaeriel651971", enabled: true, orgs: ["aerielaaeriel651971"], localmcpgo_secrets: { AZURE_DEVOPS_PAT: "unit-secret-azure-abcdef1234567890", AZURE_DEVOPS_ORG_URL: "https://dev.azure.com/aerielaaeriel651971", HUB_URLS: "https://hub.example.com", MCP_TOKEN: "unit-hub-secret-0123456789" } }
+      });
+      if (url.includes("/localmcpgo_cache.json")) return Response.json({});
+      calls.push({ url, init });
+      return Response.json({ jsonrpc: "2.0", id: 1, result: {} });
+    }));
+    const ctx = { method: "static_token", subject: "azure-only-agent" } as any;
+    const initialized = await handleJsonRpcMessage({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26" } } as any, env, ctx);
+    expect(initialized.result.serverInfo.name).toBe("cf-worker-proxy-mcp");
+    const listed = await handleJsonRpcMessage({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} } as any, env, ctx);
+    expect(listed.result.tools.map((tool: any) => tool.name)).toContain("localmcp_hub_logs");
+    expect(calls.filter(call => call.url.includes("githubcopilot") || call.url.includes("api.github.com"))).toHaveLength(0);
+    const selected = await handleJsonRpcMessage({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "select_github_account", arguments: { alias: "azure-aerielaaeriel651971" } } } as any, env, ctx);
+    expect(selected.result.content[0].text).toContain('"azure"');
+  });
+
+  it("routes an Azure-only account through the Hub control adapter without GitHub credentials", async () => {
+    const env = makeEnv(); await clearAccountCaches(env);
+    const calls: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
+      const url = String(input); calls.push({ url, init });
+      if (url.includes("unit.firebaseio.com")) {
+        if (init.method === "PUT") return Response.json({});
+        return Response.json({ azure: { username: "azure", enabled: true, readonly: false, orgs: ["example"], localmcpgo_secrets: { AZURE_DEVOPS_PAT: "unit-secret-azure-abcdef1234567890", AZURE_DEVOPS_ORG_URL: "https://dev.azure.com/example", HUB_URLS: "https://hub.example.test", MCP_TOKEN: "unit-hub-secret-0123456789" } } });
+      }
+      if (url.includes("/_apis/projects")) return Response.json({ value: [{ id: "p1", name: "Project" }] });
+      if (url.includes("/_apis/git/repositories")) return Response.json({ value: [{ id: "r1", name: "runner-config", defaultBranch: "refs/heads/main" }] });
+      if (url.includes("/_apis/pipelines")) return Response.json({ value: [] });
+      throw new Error("Unexpected URL " + url);
+    }));
+    const response = await handleJsonRpcMessage({ jsonrpc: "2.0", id: 31, method: "tools/call", params: { name: "localmcp_hub_check_secrets", arguments: { provider: "azure", project: "Project" } } } as any, env, { method: "static_token", subject: "azure-agent", pinnedAccount: "azure" } as any);
+    const value = JSON.parse(response.result.content[0].text);
+    expect(value).toMatchObject({ provider: "azure", account: "azure", credential_validated: true, hub_credentials_ready: true, selected_project: "Project" });
+    expect(JSON.stringify(value)).not.toContain("unit-secret-azure-abcdef1234567890");
+    expect(calls.some(call => call.url.includes("api.github.com"))).toBe(false);
+  });
+
 });

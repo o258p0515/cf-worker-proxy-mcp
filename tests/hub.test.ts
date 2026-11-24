@@ -82,10 +82,40 @@ describe("isolated LocalMCP Hub proxy layer", () => {
     expect(tools.map(tool => tool.name)).toEqual(["hub__list_runners", "hub__select_runner", "hub__get_job_result"]);
   });
 
-  it("keeps the Hub meta-tool catalog visible when no Hub URL is configured", async () => {
-    const fetch = vi.fn();
+  it("uses the built-in Hub origin when the selected account has no HUB_URLS", async () => {
+    const fetch = vi.fn(async (input: any, init: any) => {
+      expect(String(input)).toBe("https://hub.o258p0515.dpdns.org/mcp");
+      expect(init.headers.Authorization).toBe("Bearer mcp-token-shared-0123456789abcdef");
+      const rpc = JSON.parse(init.body);
+      return Response.json({ jsonrpc: "2.0", id: rpc.id, result: { tools: [{ name: "bash", inputSchema: { type: "object", properties: {} } }] } });
+    });
     vi.stubGlobal("fetch", fetch);
-    expect((await getHubTools({ ...account, localmcpgo_secrets: { MCP_TOKEN: "x" } }, ctx)).map(tool => tool.name)).toEqual(["hub__list_runners", "hub__select_runner", "hub__get_job_result"]);
-    expect(fetch).not.toHaveBeenCalled();
+    const noHubUrl = { ...account, localmcpgo_secrets: { MCP_TOKEN: "mcp-token-shared-0123456789abcdef" } };
+    expect((await getHubTools(noHubUrl, ctx)).map(tool => tool.name)).toEqual([HUB_TOOL_PREFIX + "bash"]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses Proxy LOCALMCP_HUB_ORIGIN for direct Hub tool calls when RTDB omits HUB_URLS", async () => {
+    const fetch = vi.fn(async (input: any, init: any) => {
+      expect(String(input)).toBe("https://preview-hub.example.workers.dev/mcp");
+      const rpc = JSON.parse(init.body);
+      return Response.json({ jsonrpc: "2.0", id: rpc.id, result: { content: [{ type: "text", text: JSON.stringify({ runners: [] }) }] } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const noHubUrl = { ...account, localmcpgo_secrets: { MCP_TOKEN: "mcp-token-shared-0123456789abcdef" } };
+    await callHubTool("hub__list_runners", {}, noHubUrl, ctx, "mcp-token-shared-0123456789abcdef", undefined, "https://preview-hub.example.workers.dev");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("prefers the Proxy LOCALMCP_HUB_ORIGIN over the built-in Hub origin when RTDB omits HUB_URLS", async () => {
+    const fetch = vi.fn(async (input: any, init: any) => {
+      expect(String(input)).toBe("https://preview-hub.example.workers.dev/mcp");
+      const rpc = JSON.parse(init.body);
+      return Response.json({ jsonrpc: "2.0", id: rpc.id, result: { tools: [{ name: "bash", inputSchema: { type: "object", properties: {} } }] } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const noHubUrl = { ...account, localmcpgo_secrets: { MCP_TOKEN: "mcp-token-shared-0123456789abcdef" } };
+    const tools = await getHubTools(noHubUrl, ctx, "", undefined, "https://preview-hub.example.workers.dev");
+    expect(tools.map(tool => tool.name)).toEqual([HUB_TOOL_PREFIX + "bash"]);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
