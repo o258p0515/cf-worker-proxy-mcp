@@ -56,10 +56,10 @@ async function runOne(os) {
     if (!runnerOnline) throw new Error("Timed out waiting for Azure runner registration. Last status: " + JSON.stringify({ os, state: lastStatus?.state, status: lastStatus?.status, runner_online: lastStatus?.runner_online, hub_error: lastStatus?.hub_error, timeline: lastStatus?.timeline }));
     console.log("Runner connected to LocalMCP Hub: " + runnerId);
 
-    const catalog = await call("localmcp_hub_tools", {});
-    const available = (catalog.tools || []).map(tool => tool.name);
-    if (!available.includes("system_info")) throw new Error("Hub tool catalog did not include system_info.");
-    const info = await call("localmcp_hub_call", { tool_name: "system_info", arguments: {}, runner_id: runnerId });
+    const hubRunners = await call("list_runners", {});
+    const registered = (hubRunners.runners || []).some(runner => runner.runner_id === runnerId && runner.status === "online");
+    if (!registered) throw new Error("list_runners did not report the Azure runner online: " + JSON.stringify(hubRunners));
+    const info = await call("system_info", { runner_id: runnerId });
     const infoText = JSON.stringify(info);
     if (!infoText.toLowerCase().includes(os)) throw new Error("Runner OS mismatch; expected " + os + ": " + infoText.slice(0, 1000));
     console.log("Runner system_info passed: " + infoText.slice(0, 1000));
