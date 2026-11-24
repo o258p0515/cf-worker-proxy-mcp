@@ -9,6 +9,7 @@ const apiKey = env.CF_API_KEY || "";
 const domain = env.CF_DOMAIN || "";
 const mcpDomain = (env.MCP_DOMAIN || "").trim();
 const mcpToken = env.MCP_TOKEN || "";
+const gitExecutorToken = env.GIT_EXECUTOR_TOKEN || "";
 
 if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) add("CF_API_EMAIL", "Thiếu hoặc sai định dạng email.", "Nhập email Cloudflare dùng cho Global API Key.", "dev@example.com");
 if (apiKey.length < 30 || /\s/.test(apiKey)) add("CF_API_KEY", "Global API Key thiếu hoặc không hợp lệ.", "Tạo Global API Key đủ quyền Zone Read, DNS Read/Edit và Workers KV Edit.", "<Cloudflare Global API Key>");
