@@ -118,9 +118,8 @@ async function ensureProjectResources(ctx: AzureContext, account: RtdbAccount, a
 }
 
 function yamlForRunner(alias: string) {
-  return `# LOCALMCP_HUB_RUNNER_TEMPLATE: v2
+  return `# LOCALMCP_HUB_RUNNER_TEMPLATE: v3
 variables:
-  - group: LocalMCP-Hub-${alias}
   - name: runner_os
     value: linux
   - name: runner_vm_image
@@ -199,7 +198,7 @@ async function ensureRunnerYaml(ctx: AzureContext, project: Project, repository:
     if (!(error instanceof Error) || !error.message.includes("HTTP 404")) throw error;
   }
   const yaml = yamlForRunner(alias);
-  if (existing && (typeof existing.content !== "string" || !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v1") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v2"))) {
+  if (existing && (typeof existing.content !== "string" || !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v1") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v2") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v3"))) {
     throw new Error("Azure Repos already contains /azure-pipelines.yml, but it is not managed by LocalMCP Hub. The file was not overwritten; choose another repository or integrate the runner YAML manually.");
   }
   if (existing?.content === yaml) return;
@@ -221,16 +220,7 @@ async function validateRunnerPipeline(ctx: AzureContext, project: Project, pipel
   }
   return pipeline;
 }
-async function ensureVariableGroup(ctx: AzureContext, project: Project, alias: string, hubUrls: string, token: string, pipelineId: number) {
-  const groupName = "LocalMCP-Hub-" + alias.replace(/[^A-Za-z0-9_.-]/g, "-");
-  const query = await request(ctx, "/_apis/distributedtask/variablegroups?groupName=" + encodeURIComponent(groupName) + "&projectIds=" + encodeURIComponent(project.id), {}, "7.1");
-  let group = (query.value || []).find((v: any) => v.name === groupName);
-  const payload = { name: groupName, type: "Vsts", description: "LocalMCP Hub runtime credentials for account " + alias, variables: { HUB_URLS: { value: hubUrls, isSecret: true }, MCP_TOKEN: { value: token, isSecret: true } }, variableGroupProjectReferences: [{ name: groupName, projectReference: { id: project.id, name: project.name } }] };
-  if (group) group = await request(ctx, "/_apis/distributedtask/variablegroups/" + group.id, { method: "PUT", body: JSON.stringify({ ...group, ...payload }) }, "7.1");
-  else group = await request(ctx, "/_apis/distributedtask/variablegroups", { method: "POST", body: JSON.stringify(payload) }, "7.1");
-  await request(ctx, "/" + encodeURIComponent(project.id) + "/_apis/pipelines/pipelinepermissions/variablegroup/" + group.id, { method: "PATCH", body: JSON.stringify({ pipelines: [{ id: pipelineId, authorized: true }] }) }, "7.1-preview.1");
-  return { id: Number(group.id), name: groupName, secret_values_returned: false, authorized: true, pipeline_id: pipelineId };
-}
+
 function pipelineStatus(run: any) {
   const rawState = String(run.state || "unknown").toLowerCase();
   const state = rawState === "inprogress" ? "running" : rawState === "canceling" ? "cancelling" : rawState;
@@ -302,13 +292,12 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
     const hubUrls = hubUrlConfig.value;
     const token = String(secrets(account).MCP_TOKEN || env.MCP_TOKEN || "").trim();
     if (!hubUrls || token.length < 16) throw new Error("Azure runner requires an effective Hub URL and MCP_TOKEN in RTDB or Proxy runtime.");
-    const variableGroup = await ensureVariableGroup(ctx, project, alias, hubUrls, token, pipeline.id);
-    const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline.id + "/runs", { method: "POST", body: JSON.stringify({ resources: { repositories: { self: { refName: repo.defaultBranch || "refs/heads/main" } } }, variables: { runner_os: { value: os }, runner_vm_image: { value: os === "windows" ? "windows-latest" : "ubuntu-latest" }, runner_name: { value: runnerName }, runner_tags: { value: runnerTags }, duration_seconds: { value: String(duration) }, source_ref: { value: typeof args.source_ref === "string" && /^[A-Za-z0-9_./-]{1,128}$/.test(args.source_ref) ? args.source_ref : "main" } } }) });
+    const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline.id + "/runs", { method: "POST", body: JSON.stringify({ resources: { repositories: { self: { refName: repo.defaultBranch || "refs/heads/main" } } }, variables: { runner_os: { value: os }, runner_vm_image: { value: os === "windows" ? "windows-latest" : "ubuntu-latest" }, runner_name: { value: runnerName }, runner_tags: { value: runnerTags }, duration_seconds: { value: String(duration) }, source_ref: { value: typeof args.source_ref === "string" && /^[A-Za-z0-9_./-]{1,128}$/.test(args.source_ref) ? args.source_ref : "main" }, HUB_URLS: { value: hubUrls, isSecret: true }, MCP_TOKEN: { value: token, isSecret: true } } }) });
     const runId = Number(run.id);
     const runnerId = (os === "windows" ? "az-win-" : "az-linux-") + runId;
     const hubState = await findHubRunner(account, env, authContext, runnerId);
     const runStatus = pipelineStatus(run);
-    return { provider: "azure", account: alias, project: project.name, repository: repo.name, pipeline: { id: pipeline.id, name: pipeline.name }, variable_group: variableGroup, run_id: runId, runner_id: runnerId, os, runner_name: runnerName, runner_tags: ["provider:azure", "os:" + os, "account:" + alias, "run:" + runId, "name:" + runnerName, ...runnerTags.split(",")], duration_seconds: duration, ...runStatus, status: runStatus.state === "running" && !hubState.online ? "queued" : runStatus.status, runner_online: hubState.online, hub_runner: hubState.runner, ...(hubState.error ? { hub_error: hubState.error } : {}), workflow_url: run._links?.web?.href || run.url };
+    return { provider: "azure", account: alias, project: project.name, repository: repo.name, pipeline: { id: pipeline.id, name: pipeline.name }, secret_variables: ["HUB_URLS", "MCP_TOKEN"], run_id: runId, runner_id: runnerId, os, runner_name: runnerName, runner_tags: ["provider:azure", "os:" + os, "account:" + alias, "run:" + runId, "name:" + runnerName, ...runnerTags.split(",")], duration_seconds: duration, ...runStatus, status: runStatus.state === "running" && !hubState.online ? "queued" : runStatus.status, runner_online: hubState.online, hub_runner: hubState.runner, ...(hubState.error ? { hub_error: hubState.error } : {}), workflow_url: run._links?.web?.href || run.url };
   }
   const pipelineList = discovery.pipelines[project.id] || [];
   const pipeline = args.pipeline_id
