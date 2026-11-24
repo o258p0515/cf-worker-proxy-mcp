@@ -180,7 +180,7 @@ export async function runLocalMcpTool(
     configured = secretMap(freshAccounts[alias] || account);
   }
   if (name === "localmcp_configure_secrets") {
-    const incoming = args.secrets;
+    const incoming = args.secrets as Record<string, unknown>;
     if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) throw new Error("secrets must be an object of SECRET_NAME: value pairs.");
     const replace = args.replace_existing === true;
     const merged: Record<string, string> = replace ? {} : { ...configured };
