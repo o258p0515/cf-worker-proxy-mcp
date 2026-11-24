@@ -13,7 +13,7 @@ const WRITE_TOOL = /(?:^|_)(?:write|create|update|delete|push|merge|add|remove|f
 const EXPLICITLY_MUTATING = new Set(["run_secret_scanning", "actions_run_trigger", "set_github_secret", "delete_github_secret", "localmcp_configure_secrets", "localmcp_reset_secrets", "localmcp_check_workflow", "localmcp_start", "localmcp_stop", "localmcp_restart", "localmcp_hub_start", "localmcp_hub_stop"]);
 const SECRET_TOOLS = new Set(["list_github_secrets", "set_github_secret", "delete_github_secret"]);
 const LOCALMCP_TOOLS = new Set(["localmcp_configure_secrets", "localmcp_check_secrets", "localmcp_reset_secrets", "localmcp_check_workflow", "localmcp_start", "localmcp_stop", "localmcp_restart", "localmcp_status", "localmcp_runs", "localmcp_logs", "localmcp_connection_check"]);
-const LOCALMCP_HUB_CONTROL_TOOLS = new Set(["localmcp_hub_check_secrets", "localmcp_hub_start", "localmcp_hub_runs", "localmcp_hub_status", "localmcp_hub_stop"]);
+const LOCALMCP_HUB_CONTROL_TOOLS = new Set(["localmcp_hub_check_secrets", "localmcp_hub_start", "localmcp_hub_runs", "localmcp_hub_status", "localmcp_hub_logs", "localmcp_hub_stop"]);
 const LOCALMCP_HUB_FACADE_TOOLS = new Set(["localmcp_hub_tools", "localmcp_hub_call"]);
 
 function result(id: JsonRpc["id"], value: unknown) { return { jsonrpc: "2.0", id, result: value }; }
@@ -90,7 +90,7 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
     }
     if (msg.method === "tools/list") {
       const { alias, account } = await selectAccount(env, ctx, undefined, undefined, true);
-      const upstream = await callUpstream(env, account, alias, { ...msg, params: p });
+      const upstream = account.token ? await callUpstream(env, account, alias, { ...msg, params: p }) : null;
       if (upstream?.error) return upstream;
       const upstreamResult = upstream?.result || {};
       const tools = Array.isArray(upstreamResult.tools) ? upstreamResult.tools : [];
@@ -109,7 +109,8 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
         const resolved = await resolveAccount(env, alias);
         if (!resolved.ok) throw new Error(`Unknown or disabled GitHub account '${alias}'. Available accounts: ${resolved.availableAccounts.map(a => `${a.alias} (${a.username}${a.readonly ? ", read-only" : ""})`).join(", ") || "none"}`);
         await saveSelectedAlias(env, ctx, alias);
-        return hasId ? result(msg.id, textResult({ selected: alias, username: resolved.account.username, readonly: resolved.account.readonly, message: `GitHub account '${alias}' is now active for this MCP connection.` })) : null;
+        const providers = [...(resolved.account.token ? ["github"] : []), ...(resolved.account.localmcpgo_secrets?.AZURE_DEVOPS_PAT && resolved.account.localmcpgo_secrets?.AZURE_DEVOPS_ORG_URL ? ["azure"] : [])];
+        return hasId ? result(msg.id, textResult({ selected: alias, username: resolved.account.username, readonly: resolved.account.readonly, providers, message: `Account '${alias}' is now active for this MCP connection.` })) : null;
       }
       const requested = ctx.pinnedAccount || (typeof args.account === "string" ? args.account : undefined);
       delete args.account;
@@ -119,7 +120,7 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
         return result(msg.id, textResult(`Account '${alias}' is read-only; this write operation is blocked.`, true));
       }
       if (LOCALMCP_HUB_CONTROL_TOOLS.has(name)) {
-        const hubControl = await runLocalMcpHubControlTool(name, args, account, env.MCP_TOKEN);
+        const hubControl = await runLocalMcpHubControlTool(name, args, account, env.MCP_TOKEN, alias, env, ctx);
         return hasId ? result(msg.id, textResult(hubControl)) : null;
       }
       if (name === "localmcp_hub_check_connection") {
@@ -148,6 +149,9 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
       }
       const start = Date.now();
       try {
+        if (!account.token && (SECRET_TOOLS.has(name) || LOCALMCP_TOOLS.has(name) || !name.startsWith(HUB_TOOL_PREFIX))) {
+          throw new Error("The selected account has no GitHub token. This account is Azure DevOps-only; use localmcp_hub_* tools with provider='azure'.");
+        }
         if (SECRET_TOOLS.has(name)) {
           const secretResult = await runGitHubSecretTool(name as any, args, account.token);
           auditLog({ event: "tool_call", tool: name, account: alias, authMethod: ctx.method, durationMs: Date.now() - start, status: "ok" });
@@ -167,6 +171,12 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
       }
     }
     const { alias, account } = await selectAccount(env, ctx, undefined, undefined, true);
+    if (!account.token) {
+      if (msg.method === "initialize") return hasId ? result(msg.id, { protocolVersion: String(p.protocolVersion || "2025-03-26"), capabilities: { tools: { listChanged: true } }, serverInfo: { name: "cf-worker-proxy-mcp", version: "azure-account" } }) : null;
+      if (msg.method.startsWith("notifications/")) return null;
+      if (msg.method === "resources/list") return hasId ? result(msg.id, { resources: [] }) : null;
+      throw new Error("The selected account has no GitHub token. This account is Azure DevOps-only; GitHub upstream operations are unavailable.");
+    }
     const upstream = await callUpstream(env, account, alias, msg);
     return hasId ? upstream : null;
   } catch (e) {
