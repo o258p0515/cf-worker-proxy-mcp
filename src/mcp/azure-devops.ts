@@ -184,7 +184,7 @@ function pipelineStatus(run: any) {
   } else if (!templateParameters && run.parameters && typeof run.parameters === "object") {
     templateParameters = run.parameters.templateParameters || run.parameters;
   }
-  return { id: Number(run.id), name: run.buildNumber || run.name || run.definition?.name, state, result: result || null, status: state === "completed" ? (result || "completed") : state, created_at: run.queueTime || run.createdDate, started_at: run.startTime || run.startedDate, finished_at: run.finishTime || run.finishedDate, templateParameters, runner_name: templateParameters?.runner_name, url: run._links?.web?.href || run.url };
+  return { id: Number(run.id), name: run.buildNumber || run.name || run.definition?.name, state, result: result || null, status: state === "completed" ? (result || "completed") : state, created_at: run.queueTime || run.createdDate, started_at: run.startTime || run.startedDate, finished_at: run.finishTime || run.finishedDate, templateParameters, url: run._links?.web?.href || run.url };
 }
 async function findHubRunner(account: RtdbAccount, env: any, authContext: AuthContext, runnerId: string) {
   try {
