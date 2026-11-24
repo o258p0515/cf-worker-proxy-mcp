@@ -46,6 +46,8 @@ describe("Azure DevOps Hub provider", () => {
       if (url.includes("/_apis/git/repositories?") && url.includes("/Project%20A/")) return Response.json({ value: [{ id: "repo-id", name: "runner-config", defaultBranch: "refs/heads/main" }] });
       if (url.includes("/runs?") && init.method === "POST") return Response.json({ id: 991, state: "running", createdDate: "2026-11-24T12:00:00Z", _links: { web: { href: "https://dev.azure.com/test/run/991" } } });
       if (url.includes("/_apis/pipelines/77?") && init.method !== "POST") return Response.json({ id: 77, name: "LocalMCP Hub Runner", configuration: { type: "yaml", path: "/azure-pipelines.yml", repository: { id: "repo-id" } } });
+      if (url.includes("/_apis/build/definitions/77") && init.method === "GET") return Response.json({ id: 77, revision: 1, name: "LocalMCP Hub Runner", variables: {} });
+      if (url.includes("/_apis/build/definitions/77") && init.method === "PUT") return Response.json({ id: 77, revision: 2, variables: JSON.parse(init.body).variables });
       if (url.includes("/_apis/pipelines") && !url.includes("pipelinepermissions")) {
         if (init.method === "POST") return Response.json({ id: 77, name: "LocalMCP Hub Runner", url: "https://dev.azure.com/test/pipeline/77" });
         return Response.json({ value: [] });
@@ -63,14 +65,18 @@ describe("Azure DevOps Hub provider", () => {
     const result = await runAzureHubTool("localmcp_hub_start", { project: "Project A", repository: "runner-config", os: "linux", runner_tags: "go,build", duration_seconds: 9000 }, accountWithoutHubUrl, "azure", env());
     expect(result).toMatchObject({ provider: "azure", run_id: 991, runner_id: "az-linux-991", os: "linux", duration_seconds: 3300, state: "running", secret_variables: ["HUB_URLS", "MCP_TOKEN"] });
     const yamlPush = calls.find(c => c.url.includes("/_apis/git/repositories/repo-id/pushes"));
-    expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("LOCALMCP_HUB_RUNNER_TEMPLATE: v3");
+    expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("LOCALMCP_HUB_RUNNER_TEMPLATE: v4");
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("$(runner_vm_image)");
+    expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).not.toContain("runner_os:");
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).not.toContain("LocalMCP-Hub-azure");
     const runWrite = calls.find(c => c.url.includes("/runs?") && c.init.method === "POST");
     expect(JSON.parse(runWrite.init.body).variables.runner_os.value).toBe("linux");
     expect(JSON.parse(runWrite.init.body).variables.source_ref.value).toBe("main");
     expect(JSON.parse(runWrite.init.body).variables.HUB_URLS).toMatchObject({ value: "https://hub.o258p0515.dpdns.org", isSecret: true });
     expect(JSON.parse(runWrite.init.body).variables.MCP_TOKEN).toMatchObject({ value: TOKEN, isSecret: true });
+    const definitionUpdate = calls.find(c => c.url.includes("/_apis/build/definitions/77") && c.init.method === "PUT");
+    expect(JSON.parse(definitionUpdate.init.body).variables.runner_os.allowOverride).toBe(true);
+    expect(JSON.parse(definitionUpdate.init.body).variables.HUB_URLS).toMatchObject({ value: "", isSecret: true, allowOverride: true });
     expect(calls.some(c => c.url.includes("pipelinepermissions") || c.url.includes("variablegroups"))).toBe(false);
     expect(JSON.parse(runWrite.init.body)).not.toHaveProperty("templateParameters");
     expect(JSON.stringify(result)).not.toContain(PAT);

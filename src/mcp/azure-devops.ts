@@ -118,20 +118,7 @@ async function ensureProjectResources(ctx: AzureContext, account: RtdbAccount, a
 }
 
 function yamlForRunner(alias: string) {
-  return `# LOCALMCP_HUB_RUNNER_TEMPLATE: v3
-variables:
-  - name: runner_os
-    value: linux
-  - name: runner_vm_image
-    value: ubuntu-latest
-  - name: runner_name
-    value: localmcp
-  - name: runner_tags
-    value: go
-  - name: duration_seconds
-    value: 3000
-  - name: source_ref
-    value: main
+  return `# LOCALMCP_HUB_RUNNER_TEMPLATE: v4
 jobs:
   - job: localmcp_runner
     displayName: LocalMCP Hub runner ($(runner_os))
@@ -198,7 +185,7 @@ async function ensureRunnerYaml(ctx: AzureContext, project: Project, repository:
     if (!(error instanceof Error) || !error.message.includes("HTTP 404")) throw error;
   }
   const yaml = yamlForRunner(alias);
-  if (existing && (typeof existing.content !== "string" || !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v1") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v2") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v3"))) {
+  if (existing && (typeof existing.content !== "string" || !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v1") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v2") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v3") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v4"))) {
     throw new Error("Azure Repos already contains /azure-pipelines.yml, but it is not managed by LocalMCP Hub. The file was not overwritten; choose another repository or integrate the runner YAML manually.");
   }
   if (existing?.content === yaml) return;
@@ -219,6 +206,32 @@ async function validateRunnerPipeline(ctx: AzureContext, project: Project, pipel
     throw new Error("Azure Pipeline '" + pipeline.name + "' already exists but is not the LocalMCP Hub runner pipeline for repository '" + repository.name + "'. Choose another pipeline name or repository; the existing pipeline was not modified.");
   }
   return pipeline;
+}
+async function ensureQueueTimeVariables(ctx: AzureContext, project: Project, pipelineId: number) {
+  const path = "/" + encodeURIComponent(project.name) + "/_apis/build/definitions/" + pipelineId;
+  const definition = await request(ctx, path);
+  const variables = { ...(definition.variables || {}) };
+  const desired: Record<string, any> = {
+    runner_os: { value: "linux", allowOverride: true },
+    runner_vm_image: { value: "ubuntu-latest", allowOverride: true },
+    runner_name: { value: "localmcp", allowOverride: true },
+    runner_tags: { value: "go", allowOverride: true },
+    duration_seconds: { value: "3000", allowOverride: true },
+    source_ref: { value: "main", allowOverride: true },
+    HUB_URLS: { value: "", isSecret: true, allowOverride: true },
+    MCP_TOKEN: { value: "", isSecret: true, allowOverride: true }
+  };
+  let changed = false;
+  for (const [name, settings] of Object.entries(desired)) {
+    const current = variables[name] || {};
+    if (current.allowOverride !== true || Boolean(current.isSecret) !== Boolean(settings.isSecret) || (settings.isSecret && current.value !== "")) {
+      variables[name] = { ...current, ...settings };
+      changed = true;
+    }
+  }
+  if (!changed) return { updated: false, settable_variables: Object.keys(desired) };
+  const updated = await request(ctx, path, { method: "PUT", body: JSON.stringify({ ...definition, variables, comment: "Enable LocalMCP Hub per-run queue variables" }) });
+  return { updated: true, revision: updated.revision, settable_variables: Object.keys(desired) };
 }
 
 function pipelineStatus(run: any) {
@@ -282,6 +295,7 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
       await setLocalMcpCache(env, alias, { ...(account.localmcpgo_cache || {}), azure_devops: discovery });
     } else await validateRunnerPipeline(ctx, project, pipeline, repo);
     await ensureRunnerYaml(ctx, project, repo, alias);
+    await ensureQueueTimeVariables(ctx, project, pipeline.id);
     const os = args.os === "windows" ? "windows" : "linux";
     const requestedDuration = Number(args.duration_seconds ?? 3000);
     if (!Number.isInteger(requestedDuration) || requestedDuration < 60) throw new Error("duration_seconds must be an integer of at least 60 seconds.");
