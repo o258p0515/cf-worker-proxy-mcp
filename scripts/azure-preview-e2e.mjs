@@ -48,6 +48,7 @@ async function runOne(os) {
     let lastStatus;
     for (let attempt = 0; attempt < 48; attempt++) {
       lastStatus = await call("localmcp_hub_status", { provider: "azure", project, run_id: runId, runner_id: runnerId });
+      if (attempt % 6 === 0) console.log("Azure runner wait checkpoint: " + JSON.stringify({ os, run_id: runId, state: lastStatus.state, status: lastStatus.status, runner_online: lastStatus.runner_online, queue_time: lastStatus.created_at, started_at: lastStatus.started_at }));
       if (lastStatus.runner_online === true) { runnerOnline = true; break; }
       if (lastStatus.state === "completed" || ["failed", "canceled", "cancelled"].includes(String(lastStatus.result || lastStatus.status).toLowerCase())) {
         const failedLogs = [];
@@ -108,6 +109,20 @@ async function runOne(os) {
   console.log("LIVE_AZURE_E2E_PASS " + JSON.stringify({ os, run_id: runId, runner_id: runnerId, runner_online_verified: runnerOnline, cleanup_requested: runId > 0 }));
 }
 
+async function cleanupStaleIssue68Runs() {
+  const history = await call("localmcp_hub_runs", { provider: "azure", project });
+  const runs = Array.isArray(history.runs) ? history.runs : [];
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const run of runs) {
+    const runnerName = String(run.templateParameters?.runner_name || run.runner_name || "");
+    const queuedAt = Date.parse(run.created_at || run.queueTime || "");
+    if (runnerName.startsWith("issue68-e2e-") && run.state !== "completed" && Number.isFinite(queuedAt) && queuedAt < cutoff) {
+      console.log("Stopping stale Issue 68 Azure run: " + JSON.stringify({ run_id: run.id, runner_name: runnerName, state: run.state, queued_at: run.created_at }));
+      await call("localmcp_hub_stop", { provider: "azure", project, run_id: Number(run.id), runner_id: run.runner_id });
+    }
+  }
+}
+await cleanupStaleIssue68Runs();
 for (const os of ["linux", "windows"]) await runOne(os);
 console.log("LIVE_AZURE_E2E_ALL_PASS");
    91
