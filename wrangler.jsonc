@@ -10,7 +10,7 @@
     "PUBLIC_ORIGIN": "https://__PUBLIC_DOMAIN__",
     "GITHUB_MCP_UPSTREAM_URL": "https://api.githubcopilot.com/mcp/",
     "GITHUB_MCP_TOOLSETS": "all",
-    "RTDB_CACHE_TTL_SECONDS": "300",
+    "RTDB_CACHE_TTL_SECONDS": "3600",
     "LOCALMCP_HUB_ORIGIN": "https://hub.o258p0515.dpdns.org"
   },
   "services": [

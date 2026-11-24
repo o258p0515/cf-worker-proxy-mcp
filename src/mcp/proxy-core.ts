@@ -22,21 +22,36 @@ function textResult(value: unknown, isError = false) {
   return { content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }], ...(isError ? { isError: true } : {}) };
 }
 function selectionKey(ctx: AuthContext) { return `mcp:selected-account:v2:${ctx.method}:${encodeURIComponent(ctx.subject)}`; }
+const SELECTION_CACHE_TTL_MS = 30_000;
+const selectionMemory = new Map<string, { alias: string; expiresAt: number }>();
+function cacheSelectedAlias(key: string, alias: string) {
+  selectionMemory.delete(key);
+  selectionMemory.set(key, { alias, expiresAt: Date.now() + SELECTION_CACHE_TTL_MS });
+  while (selectionMemory.size > 1000) selectionMemory.delete(selectionMemory.keys().next().value!);
+}
 function selectionStub(env: Env, ctx: AuthContext) {
   return env.SSE_SESSIONS.get(env.SSE_SESSIONS.idFromName(selectionKey(ctx)));
 }
 async function saveSelectedAlias(env: Env, ctx: AuthContext, alias: string) {
+  const key = selectionKey(ctx);
   const response = await selectionStub(env, ctx).fetch("https://session.internal/_internal/account-selection", {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ alias })
   });
   if (!response.ok) throw new Error("Failed to persist GitHub account selection (HTTP " + response.status + ").");
+  cacheSelectedAlias(key, alias);
 }
 async function selectedAlias(env: Env, ctx: AuthContext): Promise<string | undefined> {
   if (ctx.pinnedAccount) return ctx.pinnedAccount;
+  const key = selectionKey(ctx);
+  const cached = selectionMemory.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.alias;
+  if (cached) selectionMemory.delete(key);
   const response = await selectionStub(env, ctx).fetch("https://session.internal/_internal/account-selection");
   if (!response.ok) throw new Error("Failed to read GitHub account selection (HTTP " + response.status + ").");
   const saved = await response.json() as { alias?: unknown };
-  return typeof saved.alias === "string" ? saved.alias : undefined;
+  if (typeof saved.alias === "string") { cacheSelectedAlias(key, saved.alias); return saved.alias; }
+  selectionMemory.delete(key);
+  return undefined;
 }
 async function selectAccount(env: Env, ctx: AuthContext, requested?: string, targetOwner?: string, allowCatalogDefault = false) {
   const accounts = await getAccounts(env);

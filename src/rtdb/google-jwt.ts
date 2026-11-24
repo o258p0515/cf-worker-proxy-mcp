@@ -5,10 +5,13 @@ export function resolveServiceAccountFromEnv(env:Env):{json:string;mode:"service
  if(env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim())return {json:env.FIREBASE_SERVICE_ACCOUNT_JSON.trim(),mode:"service_account_json"};
  return null;
 }
+let memoryToken: { token: string; expiresAt: number } | null = null;
+
 function b64url(s:string){return btoa(s).replace(/=/g,"").replace(/\+/g,"-").replace(/\//g,"_");}
 export async function googleAccessToken(env:Env):Promise<string>{
+ if(memoryToken && memoryToken.expiresAt > Date.now() + 60000) return memoryToken.token;
  const cached=await env.CACHE_KV.get("rtdb:google_oauth_token:v1");
- if(cached){try{const v=JSON.parse(await decryptAesGcm(cached,env.MCP_TOKEN));if(v.exp>Date.now()+60000)return v.token;}catch{}}
+ if(cached){try{const v=JSON.parse(await decryptAesGcm(cached,env.MCP_TOKEN));if(v.exp>Date.now()+60000){memoryToken={token:v.token,expiresAt:v.exp};return v.token;}}catch{}}
  const sa=resolveServiceAccountFromEnv(env);if(!sa)throw Error("Firebase service account is not configured");
  const p=JSON.parse(sa.json);if(p.type!=="service_account"||!p.client_email||!p.private_key)throw Error("Invalid Firebase service account");
  const now=Math.floor(Date.now()/1000),header=b64url(JSON.stringify({alg:"RS256",typ:"JWT"}));
@@ -21,6 +24,8 @@ export async function googleAccessToken(env:Env):Promise<string>{
  const res=await fetch(p.token_uri||"https://oauth2.googleapis.com/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion})});
  if(!res.ok)throw Error("Google OAuth token exchange failed (HTTP "+res.status+")");
  const data:any=await res.json();if(!data.access_token)throw Error("Google OAuth response missing access_token");
- await env.CACHE_KV.put("rtdb:google_oauth_token:v1",await encryptAesGcm(JSON.stringify({token:data.access_token,exp:Date.now()+Math.max(60,data.expires_in||3600)*1000}),env.MCP_TOKEN),{expirationTtl:3000});
+ const expiresAt=Date.now()+Math.max(60,data.expires_in||3600)*1000;
+ memoryToken={token:data.access_token,expiresAt};
+ await env.CACHE_KV.put("rtdb:google_oauth_token:v1",await encryptAesGcm(JSON.stringify({token:data.access_token,exp:expiresAt}),env.MCP_TOKEN),{expirationTtl:Math.max(60,Math.ceil((expiresAt-Date.now())/1000))});
  return data.access_token;
 }
