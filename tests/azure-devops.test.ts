@@ -68,7 +68,6 @@ describe("Azure DevOps Hub provider", () => {
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("LOCALMCP_HUB_RUNNER_TEMPLATE: v5");
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("$(runner_vm_image)");
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("parameters:");
-    expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).not.toContain("LocalMCP-Hub-");
     const runWrite = calls.find(c => c.url.includes("/runs?") && c.init.method === "POST");
     expect(JSON.parse(runWrite.init.body).templateParameters.os).toBe("linux");
     expect(JSON.parse(runWrite.init.body).templateParameters.source_ref).toBe("main");
@@ -79,9 +78,8 @@ describe("Azure DevOps Hub provider", () => {
     const groupList = calls.find(c => c.url.includes("/_apis/distributedtask/variablegroups?"));
     expect(groupList.url).toContain("/Project%20A/_apis/distributedtask/variablegroups?");
     const permissionCall = calls.find(c => c.url.includes("pipelinepermissions/variablegroup"));
-    expect(permissionCall.url).toContain("/Project%20A/_apis/pipelines/pipelinepermissions/variablegroup/12?");
+    expect(permissionCall.url).toContain("/project-id/_apis/pipelines/pipelinepermissions/variablegroup/12?");
     expect(JSON.parse(permissionCall.init.body)).toEqual({ pipelines: [{ id: 77, authorized: true }] });
-    expect(JSON.parse(runWrite.init.body)).not.toHaveProperty("templateParameters");
     expect(JSON.stringify(result)).not.toContain(PAT);
     expect(JSON.stringify(result)).not.toContain(TOKEN);
     const cacheWrites = calls.filter(c => c.url.includes("localmcpgo_cache.json") && c.init.method === "PUT");

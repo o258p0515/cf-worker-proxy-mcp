@@ -278,7 +278,7 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
     const startLine = Math.max(1, Math.floor(Number(args.start_line || 1)));
     const endLine = Math.min(startLine + MAX_LOG_LINES - 1, Math.max(startLine, Math.floor(Number(args.end_line || startLine + MAX_LOG_LINES - 1))));
     const [content, records] = await Promise.all([
-      request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId + "/logs/" + logId + "?startLine=" + startLine + "&endLine=" + endLine),
+      request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId + "/logs/" + logId + "?startLine=" + startLine + "&endLine=" + endLine, { headers: { Accept: "text/plain" } }),
       timelineRecords(ctx, project, runId)
     ]);
     const text = typeof content === "string" ? content : JSON.stringify(content);
