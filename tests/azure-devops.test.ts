@@ -76,7 +76,7 @@ describe("Azure DevOps Hub provider", () => {
     expect(groupVariables.MCP_TOKEN).toMatchObject({ value: TOKEN, isSecret: true });
     expect(groupVariables.HUB_URLS).toMatchObject({ value: "https://hub.o258p0515.dpdns.org", isSecret: true });
     const groupList = calls.find(c => c.url.includes("/_apis/distributedtask/variablegroups?"));
-    expect(groupList.url).toContain("/Project%20A/_apis/distributedtask/variablegroups?");
+    expect(groupList.url).toContain("/project-id/_apis/distributedtask/variablegroups?");
     const permissionCall = calls.find(c => c.url.includes("pipelinepermissions/variablegroup"));
     expect(permissionCall.url).toContain("/project-id/_apis/pipelines/pipelinepermissions/variablegroup/12?");
     expect(JSON.parse(permissionCall.init.body)).toEqual({ pipelines: [{ id: 77, authorized: true }] });
