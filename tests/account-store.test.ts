@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { getAccounts, listPublicAccounts, resolveAccount, clearAccountCaches, setLocalMcpSecrets } from "../src/rtdb/account-store";
+import { getAccounts, listPublicAccounts, resolveAccount, clearAccountCaches, setLocalMcpSecrets, setGitRepositories } from "../src/rtdb/account-store";
 
 function makeKV() {
   const values = new Map<string, string>();
@@ -120,6 +120,24 @@ describe("Firebase account store", () => {
     expect(cached).toBeTruthy();
     expect(cached).not.toContain(secretValue);
     expect((await listPublicAccounts(e))[0]).not.toHaveProperty("localmcpgo_secrets");
+  });
+
+  it("writes Git repository allowlist metadata without modifying the account token", async () => {
+    const calls: Array<{ url: string; init: any }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (init.method === "PUT") return Response.json(["me/repo"]);
+      return Response.json(defaultData);
+    }));
+    const e = env();
+    await getAccounts(e);
+    await setGitRepositories(e, "personal", ["me/repo"]);
+    const write = calls.find(call => call.init.method === "PUT")!;
+    expect(new URL(write.url).pathname).toBe("/github_accounts/personal/git_repositories.json");
+    expect(JSON.parse(write.init.body)).toEqual(["me/repo"]);
+    expect(calls.some(call => call.init.method === "PATCH")).toBe(false);
+    expect(e.CACHE_KV.values.has("rtdb:accounts:v1")).toBe(false);
   });
 
   it("writes LocalMCP secrets to the selected account RTDB child and clears account cache", async () => {

@@ -1,5 +1,5 @@
 import type { Env, RtdbAccount } from "../types";
-import { getAccounts, setLocalMcpSecrets } from "../rtdb/account-store";
+import { getAccounts, setGitRepositories, setLocalMcpSecrets } from "../rtdb/account-store";
 import { runGitHubSecretTool } from "./github-secrets";
 
 const WORKFLOW = ".github/workflows/example-run.yml";
@@ -184,14 +184,32 @@ export async function runLocalMcpTool(
     if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) throw new Error("secrets must be an object of SECRET_NAME: value pairs.");
     const replace = args.replace_existing === true;
     const merged: Record<string, string> = replace ? {} : { ...configured };
+    let repositoriesUpdated: string[] | undefined;
+    if (Object.prototype.hasOwnProperty.call(incoming, "GIT_REPOSITORIES")) {
+      const raw = incoming.GIT_REPOSITORIES;
+      if (typeof raw !== "string" || raw.length > 12000) throw new Error("GIT_REPOSITORIES must be a JSON array of owner/repo strings.");
+      let parsed: unknown;
+      try { parsed = JSON.parse(raw); } catch { throw new Error("GIT_REPOSITORIES must contain valid JSON."); }
+      if (!Array.isArray(parsed) || parsed.length > 100 || parsed.some(value => typeof value !== "string" || !/^[A-Za-z0-9_.-]{1,100}\\/[A-Za-z0-9_.-]{1,100}$/.test(value.trim()))) {
+        throw new Error("GIT_REPOSITORIES must be an array of up to 100 exact owner/repo values.");
+      }
+      repositoriesUpdated = [...new Set(parsed.map(value => (value as string).trim().toLowerCase()))];
+      await setGitRepositories(env, alias, repositoriesUpdated);
+    }
+    delete merged.GIT_REPOSITORIES;
     for (const [key, value] of Object.entries(incoming as Record<string, unknown>)) {
+      if (key === "GIT_REPOSITORIES") continue;
       if (!/^[A-Z_][A-Z0-9_]{0,99}$/.test(key) || typeof value !== "string" || !value.length || value.length > 48000) {
         throw new Error("Each secret must have a valid uppercase name and a non-empty string value no longer than 48,000 characters.");
       }
       merged[key] = value;
     }
-    const names = await setLocalMcpSecrets(env, alias, merged, replace);
-    return { account: alias, repository: t.owner + "/" + t.repo, saved_names: names, count: names.length, values_returned: false };
+    const names = Object.keys(merged).length ? await setLocalMcpSecrets(env, alias, merged, replace) : [];
+    return {
+      account: alias, repository: t.owner + "/" + t.repo, saved_names: names, count: names.length,
+      ...(repositoriesUpdated ? { git_repositories_updated: repositoriesUpdated } : {}),
+      values_returned: false
+    };
   }
   if (name === "localmcp_check_workflow") {
     return { repository: t.owner + "/" + t.repo, ...(await ensureWorkflow(account.token, t)) };
