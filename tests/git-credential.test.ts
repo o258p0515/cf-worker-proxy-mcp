@@ -116,4 +116,17 @@ describe("internal Git credential provider", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "account_readonly" });
   });
+  it("does not issue an empty Git credential for an Azure-only account", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: any) => {
+      if (String(input).includes("unit.firebaseio.com")) return Response.json({ azure: { username: "azure", enabled: true, localmcpgo_secrets: { AZURE_DEVOPS_PAT: "azure-pat", AZURE_DEVOPS_ORG_URL: "https://dev.azure.com/example" }, git_repositories: ["azure/repo"] } });
+      throw new Error("unexpected URL " + input);
+    }));
+    const response = await handleGitCredential(new Request("https://proxy.test/internal/runner/git-credential", {
+      method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ account: "azure", operation: "clone", repository: "https://github.com/azure/repo.git" })
+    }), makeEnv());
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "github_credential_not_configured" });
+  });
+
 });
