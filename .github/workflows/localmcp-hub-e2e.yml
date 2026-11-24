@@ -26,4 +26,3 @@ jobs:
           node --check scripts/localmcp-hub-e2e.mjs
       - name: Start, route and stop two runners through the production MCP Proxy
         run: node scripts/localmcp-hub-e2e.mjs
-   29
