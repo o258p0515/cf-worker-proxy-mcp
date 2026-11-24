@@ -64,7 +64,7 @@ export class SseSessionDO {
       this.writer = stream.writable.getWriter();
       this.lastActivityAt = Date.now();
       const sessionId = u.searchParams.get("sessionId") || "";
-      await this.writer.write(new TextEncoder().encode("event: endpoint\ndata: /messages?sessionId=" + encodeURIComponent(sessionId) + "\n\n"));
+      this.writer.write(new TextEncoder().encode("event: endpoint\ndata: /messages?sessionId=" + encodeURIComponent(sessionId) + "\n\n")).catch(() => this.closeStream());
       const writer = this.writer;
       const idleTimeoutMs = 20 * 60 * 1000;
       this.keepaliveTimer = setInterval(() => {
