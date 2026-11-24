@@ -59,7 +59,7 @@ async function runOne(os) {
     const hubRunners = await call("hub__list_runners", {});
     const registered = (hubRunners.runners || []).some(runner => runner.runner_id === runnerId && runner.status === "online");
     if (!registered) throw new Error("list_runners did not report the Azure runner online: " + JSON.stringify(hubRunners));
-    const info = await call("system_info", { runner_id: runnerId });
+    const info = await call("hub__system_info", { runner_id: runnerId });
     const infoText = JSON.stringify(info);
     if (!infoText.toLowerCase().includes(os)) throw new Error("Runner OS mismatch; expected " + os + ": " + infoText.slice(0, 1000));
     console.log("Runner system_info passed: " + infoText.slice(0, 1000));
