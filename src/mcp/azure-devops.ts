@@ -117,30 +117,100 @@ async function ensureProjectResources(ctx: AzureContext, account: RtdbAccount, a
   await setLocalMcpCache(env, alias, { ...(account.localmcpgo_cache || {}), azure_devops: discovery });
 }
 
-function yamlForRunner() {
-  return `# LOCALMCP_HUB_RUNNER_TEMPLATE: v1\nparameters:\n  - name: os\n    type: string\n    default: linux\n    values: [linux, windows]\n  - name: runner_name\n    type: string\n    default: localmcp\n  - name: runner_tags\n    type: string\n    default: go\n  - name: duration_seconds\n    type: number\n    default: 3000\n  - name: account_alias\n    type: string\n    default: default\n  - name: source_ref\n    type: string\n    default: main\nvariables:\n  - group: LocalMCP-Hub-\${{ parameters.account_alias }}\n  - name: vmImage\n    value: \${{ iif(eq(parameters.os, 'windows'), 'windows-latest', 'ubuntu-latest') }}\njobs:\n  - job: localmcp_runner\n    displayName: LocalMCP Hub runner (\${{ parameters.os }})\n    timeoutInMinutes: 60\n    pool:\n      vmImage: $(vmImage)\n    steps:\n      - checkout: self\n      - bash: git clone --depth 1 --branch "\${{ parameters.source_ref }}" https://github.com/o258p0515/localmcpcoder-go.git "$(Agent.TempDirectory)/localmcpcoder-go"\n        displayName: Checkout LocalMCP Go source\n      - task: GoTool@0\n        inputs:\n          version: '1.23.x'\n      - script: go test ./...\n        workingDirectory: $(Agent.TempDirectory)/localmcpcoder-go/go\n        displayName: Go tests\n      - script: go build -trimpath -o $(Agent.TempDirectory)/localmcpcoder-mcp ./cmd/mcp\n        workingDirectory: $(Agent.TempDirectory)/localmcpcoder-go/go\n        displayName: Build runner\n        condition: eq('\${{ parameters.os }}', 'linux')\n      - powershell: go build -trimpath -o $(Agent.TempDirectory)\\localmcpcoder-mcp.exe ./cmd/mcp\n        workingDirectory: $(Agent.TempDirectory)/localmcpcoder-go/go\n        displayName: Build Windows runner\n        condition: eq('\${{ parameters.os }}', 'windows')\n      - bash: |\n          set -euo pipefail\n          RUNNER_ID=az-linux-$(Build.BuildId)\n          TAGS="provider:azure,os:linux,account:\${{ parameters.account_alias }},run:$(Build.BuildId),name:\${{ parameters.runner_name }},\${{ parameters.runner_tags }}"\n          timeout --signal=TERM --kill-after=20s "\${{ parameters.duration_seconds }}s" \\\n            "$(Agent.TempDirectory)/localmcpcoder-mcp" --root "$(Agent.TempDirectory)/mcp-root" --tunnel hub \\\n            --hub-urls "$HUB_URLS" --runner-id "$RUNNER_ID" --runner-tags "$TAGS"\n        displayName: Start Linux Hub runner\n        condition: eq('\${{ parameters.os }}', 'linux')\n        env:\n          HUB_URLS: $(HUB_URLS)\n          MCP_TOKEN: $(MCP_TOKEN)\n      - powershell: |\n          $ErrorActionPreference = 'Stop'\n          $runnerId = 'az-win-$(Build.BuildId)'\n          $tags = 'provider:azure,os:windows,account:\${{ parameters.account_alias }},run:$(Build.BuildId),name:\${{ parameters.runner_name }},\${{ parameters.runner_tags }}'\n          $env:HUB_URLS = '$(HUB_URLS)'\n          $env:MCP_TOKEN = '$(MCP_TOKEN)'\n          $p = Start-Process -FilePath '$(Agent.TempDirectory)\\localmcpcoder-mcp.exe' -ArgumentList @('--root', '$(Agent.TempDirectory)\\mcp-root', '--tunnel', 'hub', '--hub-urls', $env:HUB_URLS, '--runner-id', $runnerId, '--runner-tags', $tags) -PassThru -NoNewWindow\n          $deadline = (Get-Date).AddSeconds([int]'\${{ parameters.duration_seconds }}')\n          while (-not $p.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2; $p.Refresh() }\n          if (-not $p.HasExited) { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8787/internal/shutdown' -Method Post -Headers @{ Authorization = "Bearer $env:MCP_TOKEN" } | Out-Null } catch { Write-Warning 'Graceful runner shutdown request failed.' }; if (-not $p.WaitForExit(35000)) { Stop-Process -Id $p.Id -Force; Write-Warning 'Runner did not drain before the shutdown deadline.' } }\n          elseif ($p.ExitCode -ne 0) { throw \"Runner exited with code $($p.ExitCode)\" }\n        displayName: Start Windows Hub runner\n        condition: eq('\${{ parameters.os }}', 'windows')\n        env:\n          HUB_URLS: $(HUB_URLS)\n          MCP_TOKEN: $(MCP_TOKEN)\n`;
+function yamlForRunner(alias: string) {
+  return `# LOCALMCP_HUB_RUNNER_TEMPLATE: v2
+variables:
+  - group: LocalMCP-Hub-${alias}
+  - name: runner_os
+    value: linux
+  - name: runner_vm_image
+    value: ubuntu-latest
+  - name: runner_name
+    value: localmcp
+  - name: runner_tags
+    value: go
+  - name: duration_seconds
+    value: 3000
+  - name: source_ref
+    value: main
+jobs:
+  - job: localmcp_runner
+    displayName: LocalMCP Hub runner ($(runner_os))
+    timeoutInMinutes: 60
+    pool:
+      vmImage: $(runner_vm_image)
+    steps:
+      - checkout: self
+      - bash: git clone --depth 1 --branch "$(source_ref)" https://github.com/o258p0515/localmcpcoder-go.git "$(Agent.TempDirectory)/localmcpcoder-go"
+        displayName: Checkout LocalMCP Go source
+      - task: GoTool@0
+        inputs:
+          version: '1.23.x'
+      - script: go test ./...
+        workingDirectory: $(Agent.TempDirectory)/localmcpcoder-go/go
+        displayName: Go tests
+      - script: go build -trimpath -o $(Agent.TempDirectory)/localmcpcoder-mcp ./cmd/mcp
+        workingDirectory: $(Agent.TempDirectory)/localmcpcoder-go/go
+        displayName: Build runner
+        condition: eq(variables['runner_os'], 'linux')
+      - powershell: go build -trimpath -o $(Agent.TempDirectory)\localmcpcoder-mcp.exe ./cmd/mcp
+        workingDirectory: $(Agent.TempDirectory)/localmcpcoder-go/go
+        displayName: Build Windows runner
+        condition: eq(variables['runner_os'], 'windows')
+      - bash: |
+          set -euo pipefail
+          RUNNER_ID=az-$(runner_os)-$(Build.BuildId)
+          TAGS="provider:azure,os:$(runner_os),account:${alias},run:$(Build.BuildId),name:$(runner_name),$(runner_tags)"
+          timeout --signal=TERM --kill-after=20s "$(duration_seconds)s" \
+            "$(Agent.TempDirectory)/localmcpcoder-mcp" --root "$(Agent.TempDirectory)/mcp-root" --tunnel hub \
+            --hub-urls "$HUB_URLS" --runner-id "$RUNNER_ID" --runner-tags "$TAGS"
+        displayName: Start Linux Hub runner
+        condition: eq(variables['runner_os'], 'linux')
+        env:
+          HUB_URLS: $(HUB_URLS)
+          MCP_TOKEN: $(MCP_TOKEN)
+      - powershell: |
+          $ErrorActionPreference = 'Stop'
+          $runnerId = 'az-$(runner_os)-$(Build.BuildId)'
+          $tags = 'provider:azure,os:$(runner_os),account:${alias},run:$(Build.BuildId),name:$(runner_name),$(runner_tags)'
+          $env:HUB_URLS = '$(HUB_URLS)'
+          $env:MCP_TOKEN = '$(MCP_TOKEN)'
+          $p = Start-Process -FilePath '$(Agent.TempDirectory)\localmcpcoder-mcp.exe' -ArgumentList @('--root', '$(Agent.TempDirectory)\mcp-root', '--tunnel', 'hub', '--hub-urls', $env:HUB_URLS, '--runner-id', $runnerId, '--runner-tags', $tags) -PassThru -NoNewWindow
+          $deadline = (Get-Date).AddSeconds([int]'$(duration_seconds)')
+          while (-not $p.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2; $p.Refresh() }
+          if (-not $p.HasExited) { try { Invoke-RestMethod -Uri 'http://127.0.0.1:8787/internal/shutdown' -Method Post -Headers @{ Authorization = "Bearer $env:MCP_TOKEN" } | Out-Null } catch { Write-Warning 'Graceful runner shutdown request failed.' }; if (-not $p.WaitForExit(35000)) { Stop-Process -Id $p.Id -Force; Write-Warning 'Runner did not drain before the shutdown deadline.' } }
+          elseif ($p.ExitCode -ne 0) { throw "Runner exited with code $($p.ExitCode)" }
+        displayName: Start Windows Hub runner
+        condition: eq(variables['runner_os'], 'windows')
+        env:
+          HUB_URLS: $(HUB_URLS)
+          MCP_TOKEN: $(MCP_TOKEN)
+`;
 }
-async function bootstrap(ctx: AzureContext, project: Project, repository: Repository, pipelineName = "LocalMCP Hub Runner"): Promise<Pipeline> {
-  const branch = (repository.defaultBranch || "refs/heads/main").replace(/^refs\/heads\//, "");
+async function ensureRunnerYaml(ctx: AzureContext, project: Project, repository: Repository, alias: string) {
+  const branch = (repository.defaultBranch || "refs/heads/main").replace(/^refs\\/heads\\//, "");
   const refs = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id + "/refs?filter=heads/" + encodeURIComponent(branch));
   const ref = (refs.value || []).find((v: any) => v.name === "refs/heads/" + branch);
   if (!ref?.objectId) throw new Error("Could not resolve default branch '" + branch + "' for Azure Repos repository '" + repository.name + "'.");
-  let yamlExists = false;
+  let existing: any = null;
   try {
-    const existingYaml = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id + "/items?path=%2Fazure-pipelines.yml&includeContent=true&versionDescriptor.version=" + encodeURIComponent(branch) + "&versionDescriptor.versionType=branch");
-    if (typeof existingYaml.content !== "string" || !existingYaml.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v1")) {
-      throw new Error("Azure Repos already contains /azure-pipelines.yml, but it is not managed by LocalMCP Hub. The file was not overwritten; choose another repository or integrate the runner YAML manually.");
-    }
-    yamlExists = true;
+    existing = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id + "/items?path=%2Fazure-pipelines.yml&includeContent=true&versionDescriptor.version=" + encodeURIComponent(branch) + "&versionDescriptor.versionType=branch");
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes("HTTP 404")) throw error;
   }
-  if (!yamlExists) {
-    await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id + "/pushes", {
-      method: "POST", body: JSON.stringify({ refUpdates: [{ name: "refs/heads/" + branch, oldObjectId: ref.objectId }], commits: [{ comment: "ci: add LocalMCP Hub Azure Pipelines runner", changes: [{ changeType: "add", item: { path: "/azure-pipelines.yml" }, newContent: { content: yamlForRunner(), contentType: "rawtext" } }] }] })
-    });
+  const yaml = yamlForRunner(alias);
+  if (existing && (typeof existing.content !== "string" || !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v1") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v2"))) {
+    throw new Error("Azure Repos already contains /azure-pipelines.yml, but it is not managed by LocalMCP Hub. The file was not overwritten; choose another repository or integrate the runner YAML manually.");
   }
-  const created = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines", { method: "POST", body: JSON.stringify({ name: pipelineName, folder: "\\", configuration: { type: "yaml", path: "/azure-pipelines.yml", repository: { id: repository.id, name: repository.name, type: "azureReposGit" } } }) });
+  if (existing?.content === yaml) return;
+  await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id + "/pushes", {
+    method: "POST",
+    body: JSON.stringify({ refUpdates: [{ name: "refs/heads/" + branch, oldObjectId: ref.objectId }], commits: [{ comment: "ci: update LocalMCP Hub Azure Pipelines runner template v2", changes: [{ changeType: existing ? "edit" : "add", item: { path: "/azure-pipelines.yml" }, newContent: { content: yaml, contentType: "rawtext" } }] }] })
+  });
+}
+async function bootstrap(ctx: AzureContext, project: Project, repository: Repository, alias: string, pipelineName = "LocalMCP Hub Runner"): Promise<Pipeline> {
+  await ensureRunnerYaml(ctx, project, repository, alias);
+  const created = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines", { method: "POST", body: JSON.stringify({ name: pipelineName, folder: "\\\\", configuration: { type: "yaml", path: "/azure-pipelines.yml", repository: { id: repository.id, name: repository.name, type: "azureReposGit" } } }) });
   return { id: Number(created.id), name: String(created.name), folder: created.folder, url: created.url };
 }
 async function validateRunnerPipeline(ctx: AzureContext, project: Project, pipeline: Pipeline, repository: Repository) {
@@ -158,7 +228,7 @@ async function ensureVariableGroup(ctx: AzureContext, project: Project, alias: s
   const payload = { name: groupName, type: "Vsts", description: "LocalMCP Hub runtime credentials for account " + alias, variables: { HUB_URLS: { value: hubUrls, isSecret: true }, MCP_TOKEN: { value: token, isSecret: true } }, variableGroupProjectReferences: [{ name: groupName, projectReference: { id: project.id, name: project.name } }] };
   if (group) group = await request(ctx, "/_apis/distributedtask/variablegroups/" + group.id, { method: "PUT", body: JSON.stringify({ ...group, ...payload }) }, "7.1");
   else group = await request(ctx, "/_apis/distributedtask/variablegroups", { method: "POST", body: JSON.stringify(payload) }, "7.1");
-  await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/pipelinepermissions/variablegroup/" + group.id, { method: "PATCH", body: JSON.stringify({ pipelines: [{ id: pipelineId, authorized: true }] }) }, "7.1-preview.1");
+  await request(ctx, "/" + encodeURIComponent(project.id) + "/_apis/pipelines/pipelinepermissions/variablegroup/" + group.id, { method: "PATCH", body: JSON.stringify({ pipelines: [{ id: pipelineId, authorized: true }] }) }, "7.1-preview.1");
   return { id: Number(group.id), name: groupName, secret_values_returned: false, authorized: true, pipeline_id: pipelineId };
 }
 function pipelineStatus(run: any) {
@@ -216,11 +286,12 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
     const pipelineName = typeof args.pipeline === "string" && args.pipeline.trim() ? args.pipeline.trim() : "LocalMCP Hub Runner";
     let pipeline = args.pipeline_id ? pipelineList.find(p => p.id === Number(args.pipeline_id)) : pipelineList.find(p => p.name === pipelineName);
     if (!pipeline) {
-      pipeline = await bootstrap(ctx, project, repo, pipelineName);
+      pipeline = await bootstrap(ctx, project, repo, alias, pipelineName);
       await validateRunnerPipeline(ctx, project, pipeline, repo);
       discovery.pipelines[project.id] = [...pipelineList, pipeline];
       await setLocalMcpCache(env, alias, { ...(account.localmcpgo_cache || {}), azure_devops: discovery });
     } else await validateRunnerPipeline(ctx, project, pipeline, repo);
+    await ensureRunnerYaml(ctx, project, repo, alias);
     const os = args.os === "windows" ? "windows" : "linux";
     const requestedDuration = Number(args.duration_seconds ?? 3000);
     if (!Number.isInteger(requestedDuration) || requestedDuration < 60) throw new Error("duration_seconds must be an integer of at least 60 seconds.");
@@ -232,7 +303,7 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
     const token = String(secrets(account).MCP_TOKEN || env.MCP_TOKEN || "").trim();
     if (!hubUrls || token.length < 16) throw new Error("Azure runner requires an effective Hub URL and MCP_TOKEN in RTDB or Proxy runtime.");
     const variableGroup = await ensureVariableGroup(ctx, project, alias, hubUrls, token, pipeline.id);
-    const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline.id + "/runs", { method: "POST", body: JSON.stringify({ resources: { repositories: { self: { refName: repo.defaultBranch || "refs/heads/main" } } }, templateParameters: { os, runner_name: runnerName, runner_tags: runnerTags, duration_seconds: duration, account_alias: alias, source_ref: typeof args.source_ref === "string" && /^[A-Za-z0-9_./-]{1,128}$/.test(args.source_ref) ? args.source_ref : "main" } }) });
+    const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline.id + "/runs", { method: "POST", body: JSON.stringify({ resources: { repositories: { self: { refName: repo.defaultBranch || "refs/heads/main" } } }, variables: { runner_os: { value: os }, runner_vm_image: { value: os === "windows" ? "windows-latest" : "ubuntu-latest" }, runner_name: { value: runnerName }, runner_tags: { value: runnerTags }, duration_seconds: { value: String(duration) }, source_ref: { value: typeof args.source_ref === "string" && /^[A-Za-z0-9_./-]{1,128}$/.test(args.source_ref) ? args.source_ref : "main" } } }) });
     const runId = Number(run.id);
     const runnerId = (os === "windows" ? "az-win-" : "az-linux-") + runId;
     const hubState = await findHubRunner(account, env, authContext, runnerId);

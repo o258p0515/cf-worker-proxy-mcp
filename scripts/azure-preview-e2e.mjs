@@ -56,7 +56,7 @@ async function runOne(os) {
     if (!runnerOnline) throw new Error("Timed out waiting for Azure runner registration. Last status: " + JSON.stringify({ os, state: lastStatus?.state, status: lastStatus?.status, runner_online: lastStatus?.runner_online, hub_error: lastStatus?.hub_error, timeline: lastStatus?.timeline }));
     console.log("Runner connected to LocalMCP Hub: " + runnerId);
 
-    const hubRunners = await call("list_runners", {});
+    const hubRunners = await call("hub__list_runners", {});
     const registered = (hubRunners.runners || []).some(runner => runner.runner_id === runnerId && runner.status === "online");
     if (!registered) throw new Error("list_runners did not report the Azure runner online: " + JSON.stringify(hubRunners));
     const info = await call("system_info", { runner_id: runnerId });
@@ -64,7 +64,7 @@ async function runOne(os) {
     if (!infoText.toLowerCase().includes(os)) throw new Error("Runner OS mismatch; expected " + os + ": " + infoText.slice(0, 1000));
     console.log("Runner system_info passed: " + infoText.slice(0, 1000));
     const shellMarker = "ISSUE68_" + os.toUpperCase() + "_SHELL_OK";
-    const shellResult = await call("bash", { command: os === "windows" ? "Write-Output " + shellMarker : "printf '" + shellMarker + "\\n'", runner_id: runnerId });
+    const shellResult = await call("hub__bash", { command: os === "windows" ? "Write-Output " + shellMarker : "printf '" + shellMarker + "\\n'", runner_id: runnerId });
     if (!JSON.stringify(shellResult).includes(shellMarker)) throw new Error("Runner shell execution failed for " + os + ": " + JSON.stringify(shellResult).slice(0, 1000));
     console.log("Runner shell passed: " + shellMarker);
 
