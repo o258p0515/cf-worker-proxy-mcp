@@ -24,9 +24,18 @@ jobs:
         run: npm run typecheck
       - name: Unit tests
         run: npm test
+      - name: Live Azure DevOps E2E on isolated preview
+        if: github.event_name == 'pull_request' && github.head_ref == 'feature/issue-68-azure-devops-runner'
+        timeout-minutes: 25
+        env:
+          PREVIEW_DOMAIN: https://github-mcp-proxy-issue68-preview.localmcpcoder-5b1b15.workers.dev
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+        run: node scripts/azure-preview-e2e.mjs
       - name: Validate deployment scripts syntax
         run: |
           node --check scripts/generate-version.mjs
           node --check scripts/prepare-deploy.mjs
           node --check scripts/sync-secrets.mjs
           node --check scripts/validate-env.mjs
+          node --check scripts/azure-preview-e2e.mjs
+   41
