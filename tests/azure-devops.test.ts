@@ -45,6 +45,7 @@ describe("Azure DevOps Hub provider", () => {
       if (url.includes("/refs?filter=heads/main")) return Response.json({ value: [{ name: "refs/heads/main", objectId: "old-object" }] });
       if (url.includes("/_apis/git/repositories?") && url.includes("/Project%20A/")) return Response.json({ value: [{ id: "repo-id", name: "runner-config", defaultBranch: "refs/heads/main" }] });
       if (url.includes("/runs?") && init.method === "POST") return Response.json({ id: 991, state: "running", createdDate: "2026-11-24T12:00:00Z", _links: { web: { href: "https://dev.azure.com/test/run/991" } } });
+      if (url.includes("/_apis/pipelines/77?") && init.method !== "POST") return Response.json({ id: 77, name: "LocalMCP Hub Runner", configuration: { type: "yaml", path: "/azure-pipelines.yml", repository: { id: "repo-id" } } });
       if (url.includes("/_apis/pipelines") && !url.includes("pipelinepermissions")) {
         if (init.method === "POST") return Response.json({ id: 77, name: "LocalMCP Hub Runner", url: "https://dev.azure.com/test/pipeline/77" });
         return Response.json({ value: [] });
@@ -71,6 +72,9 @@ describe("Azure DevOps Hub provider", () => {
     expect(JSON.parse(runWrite.init.body).templateParameters.source_ref).toBe("main");
     expect(JSON.stringify(result)).not.toContain(PAT);
     expect(JSON.stringify(result)).not.toContain(TOKEN);
+    const cacheWrites = calls.filter(c => c.url.includes("localmcpgo_cache.json") && c.init.method === "PUT");
+    const persistedCache = JSON.parse(cacheWrites[cacheWrites.length - 1].init.body);
+    expect(persistedCache.azure_devops.pipelines["project-id"]).toContainEqual({ id: 77, name: "LocalMCP Hub Runner", folder: undefined, url: "https://dev.azure.com/test/pipeline/77" });
   });
 
   it("reads bounded log windows without a server-side polling loop", async () => {
@@ -170,4 +174,4 @@ describe("Azure DevOps Hub provider", () => {
   });
 
 });
-  173
+  177

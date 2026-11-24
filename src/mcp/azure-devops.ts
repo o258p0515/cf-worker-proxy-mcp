@@ -210,8 +210,12 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
     const pipelineList = discovery.pipelines[project.id] || [];
     const pipelineName = typeof args.pipeline === "string" && args.pipeline.trim() ? args.pipeline.trim() : "LocalMCP Hub Runner";
     let pipeline = args.pipeline_id ? pipelineList.find(p => p.id === Number(args.pipeline_id)) : pipelineList.find(p => p.name === pipelineName);
-    if (!pipeline) pipeline = await bootstrap(ctx, project, repo, pipelineName);
-    else await validateRunnerPipeline(ctx, project, pipeline, repo);
+    if (!pipeline) {
+      pipeline = await bootstrap(ctx, project, repo, pipelineName);
+      await validateRunnerPipeline(ctx, project, pipeline, repo);
+      discovery.pipelines[project.id] = [...pipelineList, pipeline];
+      await setLocalMcpCache(env, alias, { ...(account.localmcpgo_cache || {}), azure_devops: discovery });
+    } else await validateRunnerPipeline(ctx, project, pipeline, repo);
     const os = args.os === "windows" ? "windows" : "linux";
     const requestedDuration = Number(args.duration_seconds ?? 3000);
     if (!Number.isInteger(requestedDuration) || requestedDuration < 60) throw new Error("duration_seconds must be an integer of at least 60 seconds.");
@@ -299,4 +303,4 @@ export async function runAzureHubTool(name: string, args: Record<string, unknown
     throw error;
   }
 }
-  302
+  306
