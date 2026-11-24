@@ -6,6 +6,10 @@ type Claims = Record<string, unknown>;
 type JwkSet = { keys: (JsonWebKey & { kid?: string })[] };
 let cachedKeys: JwkSet["keys"] = [];
 let cachedAt = 0;
+let lastForcedRefreshAt = 0;
+const JWKS_TIMEOUT_MS = 5_000;
+const JWKS_REFRESH_COOLDOWN_MS = 30_000;
+
 function decode(value: string): Uint8Array {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const binary = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
@@ -16,7 +20,15 @@ function decodeJson(value: string): Record<string, unknown> {
 }
 async function signingKeys(force = false): Promise<JwkSet["keys"]> {
   if (!force && cachedKeys.length && Date.now() - cachedAt < 5 * 60_000) return cachedKeys;
-  const response = await fetch(JWKS_URL, { headers: { Accept: "application/json" } });
+  if (force) {
+    const now = Date.now();
+    if (now - lastForcedRefreshAt < JWKS_REFRESH_COOLDOWN_MS && cachedKeys.length) return cachedKeys;
+    lastForcedRefreshAt = now;
+  }
+  const response = await fetch(JWKS_URL, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(JWKS_TIMEOUT_MS)
+  });
   if (!response.ok) throw new Error("OIDC signing keys unavailable");
   const body = await response.json() as JwkSet;
   if (!Array.isArray(body.keys) || !body.keys.length) throw new Error("OIDC signing keys invalid");
