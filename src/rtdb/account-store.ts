@@ -128,6 +128,24 @@ export async function resolveAccount(env: Env, alias: string) {
     : { ok: false as const, reason: "invalid_or_missing", availableAccounts };
 }
 
+export async function setGitRepositories(env: Env, alias: string, repositories: string[]) {
+  const accounts = await getAccounts(env, { forceRefresh: true });
+  if (!accounts[alias]?.enabled) throw new Error("Cannot configure Git repository allowlist for an unknown or disabled account.");
+  if (!activeRtdbUrl) throw new Error("RTDB account path could not be resolved");
+  const url = new URL(activeRtdbUrl);
+  url.pathname = url.pathname.slice(0, -5) + "/" + encodeURIComponent(alias) + "/git_repositories.json";
+  const serviceAccount = resolveServiceAccountFromEnv(env);
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (serviceAccount) {
+    url.searchParams.delete("auth");
+    headers.set("Authorization", "Bearer " + await googleAccessToken(env));
+  }
+  const response = await fetch(url, { method: "PUT", headers, body: JSON.stringify(repositories) });
+  if (!response.ok) throw new Error("Firebase RTDB Git repository allowlist write failed (HTTP " + response.status + ")");
+  await clearAccountCaches(env);
+  return repositories;
+}
+
 export async function setLocalMcpSecrets(env: Env, alias: string, secrets: Record<string, string>, replace = false) {
   // Force a fresh read so the selected RTDB node (including /env fallback) is known.
   await getAccounts(env, { forceRefresh: true });

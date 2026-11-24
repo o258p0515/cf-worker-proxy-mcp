@@ -73,6 +73,25 @@ describe("LocalMCP Go lifecycle tools", () => {
   });
 
 
+  it("stores GIT_REPOSITORIES as account metadata, not a GitHub Actions secret", async () => {
+    const calls: Array<{ url: string; method: string; body: string }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
+      const url = String(input);
+      const method = String(init.method || "GET");
+      calls.push({ url, method, body: String(init.body || "") });
+      if (url.endsWith("/repos/octocat/localmcpcoder-go")) return Response.json({ default_branch: "main" });
+      if (url.includes("unit.firebaseio.com")) return Response.json({ personal: { ...account, git_repositories: [] } });
+      if (method === "PUT" && url.endsWith("/git_repositories.json")) return Response.json(["o258p0515/localmcpcoder-go"]);
+      throw new Error("Unexpected request " + method + " " + url);
+    }));
+    const result = await runLocalMcpTool("localmcp_configure_secrets", {
+      secrets: { GIT_REPOSITORIES: '["o258p0515/localmcpcoder-go"]' }
+    }, env, "personal", account);
+    expect(result).toMatchObject({ git_repositories_updated: ["o258p0515/localmcpcoder-go"], saved_names: [] });
+    expect(calls.some(call => call.method === "PUT" && new URL(call.url).pathname.endsWith("/git_repositories.json"))).toBe(true);
+    expect(calls.some(call => new URL(call.url).pathname.endsWith("/localmcpgo_secrets.json"))).toBe(false);
+  });
+
   it("checks LocalMCP Go with JSON-only MCP initialize instead of negotiating SSE", async () => {
     let accept = "";
     vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
