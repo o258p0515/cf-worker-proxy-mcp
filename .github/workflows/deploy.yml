@@ -7,10 +7,11 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: github-mcp-proxy-deploy
+  group: github-mcp-proxy-deploy-${{ github.ref_name }}
   cancel-in-progress: true
 jobs:
   deploy:
+    if: github.ref_name == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -90,7 +91,7 @@ jobs:
           INIT=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":22,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"production-parity-smoke","version":"1"}}}')
           echo "$INIT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||!r.result?.protocolVersion||!r.result?.serverInfo?.name||r.result.serverInfo.name==="github-mcp-proxy")process.exit(1)})'
           TOOLS=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":23,"method":"tools/list","params":{}}')
-          echo "$TOOLS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const t=r.result?.tools||[];const names=t.map(x=>x.name);const required=["list_github_accounts","select_github_account","list_github_secrets","set_github_secret","delete_github_secret","localmcp_configure_secrets","localmcp_check_secrets","localmcp_reset_secrets","localmcp_check_workflow","localmcp_start","localmcp_stop","localmcp_restart","localmcp_status","localmcp_runs","localmcp_logs","localmcp_connection_check","localmcp_hub_check_connection","localmcp_hub_tools","localmcp_hub_call","localmcp_hub_check_secrets","localmcp_hub_start","localmcp_hub_stop","localmcp_hub_status","localmcp_hub_runs"];if(r.error||!t.length||required.some(n=>!names.includes(n))||t.some(x=>x.inputSchema?.properties?.account))process.exit(1);if(!names.includes("get_me"))process.exit(1);console.log("Production MCP smoke passed: "+t.length+" tools including account controls, Actions secrets, and LocalMCP lifecycle tools")})'
+          echo "$TOOLS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const t=r.result?.tools||[];const names=t.map(x=>x.name);const required=["list_github_accounts","select_github_account","list_github_secrets","set_github_secret","delete_github_secret","localmcp_configure_secrets","localmcp_check_secrets","localmcp_reset_secrets","localmcp_check_workflow","localmcp_start","localmcp_stop","localmcp_restart","localmcp_status","localmcp_runs","localmcp_logs","localmcp_connection_check","localmcp_hub_check_connection","localmcp_hub_tools","localmcp_hub_call","localmcp_hub_check_secrets","localmcp_hub_start","localmcp_hub_stop","localmcp_hub_status","localmcp_hub_runs","localmcp_hub_logs"];if(r.error||!t.length||required.some(n=>!names.includes(n))||t.some(x=>x.inputSchema?.properties?.account))process.exit(1);if(!names.includes("get_me"))process.exit(1);console.log("Production MCP smoke passed: "+t.length+" tools including account controls, Actions secrets, and LocalMCP lifecycle tools")})'
           SELECT=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"select_github_account","arguments":{"alias":"personal"}}}')
           echo "$SELECT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||r.result?.isError)process.exit(1);const v=JSON.parse(r.result?.content?.[0]?.text||"{}");if(v.selected!=="personal")process.exit(1);console.log("Production account selection smoke passed")})'
           WORKFLOW=$(curl --fail --silent --show-error -X POST "https://$PUBLIC_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"localmcp_check_workflow","arguments":{}}}')
@@ -121,3 +122,80 @@ jobs:
           git add -f deployment-status.json
           git commit -m "chore(deploy): record deployment result [skip ci]" || echo 'No deployment status changes to commit'
           git push origin HEAD:refs/heads/main
+  preview:
+    if: github.ref_name != 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
+      MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Validate deployment credentials and RTDB
+        env:
+          CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          GIT_EXECUTOR_TOKEN: ${{ secrets.GIT_EXECUTOR_TOKEN }}
+          MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
+          MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
+          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
+          FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          RTDB_URL: ${{ secrets.RTDB_URL }}
+          RTDB_AUTH_URL: ${{ secrets.RTDB_AUTH_URL }}
+        run: node scripts/validate-env.mjs
+      - name: Install dependencies and run branch checks
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm test
+      - name: Prepare isolated Cloudflare preview
+        env:
+          CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+        run: node scripts/prepare-preview.mjs
+      - name: Deploy isolated preview Worker
+        run: npx wrangler deploy --config wrangler.preview.jsonc
+      - name: Sync preview runtime secrets
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          GIT_EXECUTOR_TOKEN: ${{ secrets.GIT_EXECUTOR_TOKEN }}
+          MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
+          MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
+          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
+          RTDB_URL: ${{ secrets.RTDB_URL }}
+          RTDB_AUTH_URL: ${{ secrets.RTDB_AUTH_URL }}
+          FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/sync-secrets.mjs | npx wrangler secret bulk --config wrangler.preview.jsonc
+      - name: Smoke test Azure-only account behavior on preview
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+        run: |
+          set -euo pipefail
+          sleep 5
+          curl --fail --silent --show-error "$PREVIEW_DOMAIN/health" | grep -q '"status":"ok"'
+          UNAUTH=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST "$PREVIEW_DOMAIN/mcp" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}')
+          test "$UNAUTH" = "401"
+          INIT=$(curl --fail --silent --show-error -X POST "$PREVIEW_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"issue68-preview","version":"1"}}}')
+          echo "$INIT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||!r.result?.serverInfo)process.exit(1)})'
+          ACCOUNTS=$(curl --fail --silent --show-error -X POST "$PREVIEW_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_github_accounts","arguments":{}}}')
+          echo "$ACCOUNTS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const a=JSON.parse(r.result?.content?.[0]?.text||"[]");const azure=a.find(x=>x.alias==="azure-aerielaaeriel651971");if(!azure||!azure.providers?.includes("azure"))process.exit(1);console.log("Preview recognized Azure-only RTDB account; credentials were not returned")})'
+          SELECT=$(curl --fail --silent --show-error -X POST "$PREVIEW_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"select_github_account","arguments":{"alias":"azure-aerielaaeriel651971"}}}')
+          echo "$SELECT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);if(r.error||r.result?.isError)process.exit(1)})'
+          TOOLS=$(curl --fail --silent --show-error -X POST "$PREVIEW_DOMAIN/mcp" -H "X-API-Key: $MCP_TOKEN" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":5,"method":"tools/list","params":{}}')
+          echo "$TOOLS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const n=(r.result?.tools||[]).map(x=>x.name);if(n.includes("get_me")||!n.includes("localmcp_hub_logs")||!n.includes("localmcp_hub_start"))process.exit(1);console.log("Preview Azure-only tool catalog passed")})'
+      - name: Record preview endpoint
+        if: always()
+        run: |
+          if [ -n "${PREVIEW_DOMAIN:-}" ]; then echo "Preview URL: $PREVIEW_DOMAIN/mcp" >> "$GITHUB_STEP_SUMMARY"; fi
