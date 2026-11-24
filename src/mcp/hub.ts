@@ -71,7 +71,7 @@ export async function getHubTools(account: RtdbAccount, ctx: AuthContext, fallba
 export async function callHubTool(name: string, args: Record<string, unknown>, account: RtdbAccount, ctx: AuthContext, fallbackToken = "", service?: Fetcher, serviceOrigin?: string) {
   const toolName = name.startsWith(HUB_TOOL_PREFIX) ? name.slice(HUB_TOOL_PREFIX.length) : name;
   if (!toolName || !/^[A-Za-z0-9_.-]{1,128}$/.test(toolName)) throw new Error("Invalid LocalMCP Hub tool name.");
-  const { token, urls } = hubConfig(account, fallbackToken);
+  const { token, urls } = hubConfig(account, fallbackToken, serviceOrigin);
   const session = await sessionId(ctx);
   const failures: string[] = [];
   for (const base of urls) {
@@ -82,7 +82,7 @@ export async function callHubTool(name: string, args: Record<string, unknown>, a
 }
 export async function checkHubConnection(account: RtdbAccount, fallbackToken = "", service?: Fetcher, serviceOrigin?: string) {
   let configured: ReturnType<typeof hubConfig>;
-  try { configured = hubConfig(account, fallbackToken); } catch (error) { return { ready: false, reason: error instanceof Error ? error.message : String(error) }; }
+  try { configured = hubConfig(account, fallbackToken, serviceOrigin); } catch (error) { return { ready: false, reason: error instanceof Error ? error.message : String(error) }; }
   const checks: Array<Record<string, unknown>> = [];
   for (const base of configured.urls) {
     try {

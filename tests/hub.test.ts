@@ -95,6 +95,17 @@ describe("isolated LocalMCP Hub proxy layer", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("uses Proxy LOCALMCP_HUB_ORIGIN for direct Hub tool calls when RTDB omits HUB_URLS", async () => {
+    const fetch = vi.fn(async (input: any, init: any) => {
+      expect(String(input)).toBe("https://preview-hub.example.workers.dev/mcp");
+      const rpc = JSON.parse(init.body);
+      return Response.json({ jsonrpc: "2.0", id: rpc.id, result: { content: [{ type: "text", text: JSON.stringify({ runners: [] }) }] } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const noHubUrl = { ...account, localmcpgo_secrets: { MCP_TOKEN: "mcp-token-shared-0123456789abcdef" } };
+    await callHubTool("hub__list_runners", {}, noHubUrl, ctx, "mcp-token-shared-0123456789abcdef", undefined, "https://preview-hub.example.workers.dev");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it("prefers the Proxy LOCALMCP_HUB_ORIGIN over the built-in Hub origin when RTDB omits HUB_URLS", async () => {
     const fetch = vi.fn(async (input: any, init: any) => {
       expect(String(input)).toBe("https://preview-hub.example.workers.dev/mcp");

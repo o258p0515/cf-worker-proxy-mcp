@@ -187,6 +187,16 @@ async function findHubRunner(account: RtdbAccount, env: any, authContext: AuthCo
     return { online: null as boolean | null, runner: null, error: error instanceof Error ? error.message : "Hub status unavailable" };
   }
 }
+
+async function requestRunnerShutdown(account: RtdbAccount, env: any, authContext: AuthContext, runnerId: string, os: "linux" | "windows") {
+  const hubState = await findHubRunner(account, env, authContext, runnerId);
+  if (!hubState.online) return false;
+  const command = os === "windows"
+    ? '$runnerPid = (Get-CimInstance Win32_Process -Filter "Name=\'localmcpcoder-mcp.exe\'" | Select-Object -First 1 -ExpandProperty ProcessId); if ($runnerPid) { Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 2; Stop-Process -Id $runnerPid") -WindowStyle Hidden }'
+    : 'pids=$(ps -eo pid=,comm= | awk \'$2 == "localmcpcoder-m" {print $1}\'); if [ -n "$pids" ]; then nohup sh -c "sleep 1; kill -TERM $pids" >/dev/null 2>&1 & fi';
+  await callHubTool(HUB_TOOL_PREFIX + "bash", { command, runner_id: runnerId, timeout_ms: 10000 }, account, authContext, String(secrets(account).MCP_TOKEN || env.MCP_TOKEN || ""), env.LOCALMCP_HUB, env.LOCALMCP_HUB_ORIGIN);
+  return true;
+}
 async function timelineRecords(ctx: AzureContext, project: Project, runId: number) {
   try {
     const timeline = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId + "/timeline");
@@ -274,8 +284,13 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
   if (name === "localmcp_hub_stop") {
     const run = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipeline!.id + "/runs/" + runId);
     if (String(run.state).toLowerCase() === "completed") return { provider: "azure", run_id: runId, cancel_requested: false, reason: "Pipeline run is already completed." };
+    const os = String(run.templateParameters?.os || "linux") === "windows" ? "windows" : "linux";
+    const runnerId = typeof args.runner_id === "string" && /^az-(?:linux|win)-[A-Za-z0-9-]+$/.test(args.runner_id) ? args.runner_id : (os === "windows" ? "az-win-" : "az-linux-") + runId;
+    try {
+      if (await requestRunnerShutdown(account, env, authContext, runnerId, os)) return { provider: "azure", run_id: runId, runner_id: runnerId, graceful_shutdown_requested: true, cancel_requested: false };
+    } catch { /* Fall back to Azure cancellation if the runner cannot be reached. */ }
     await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId, { method: "PATCH", body: JSON.stringify({ status: "cancelling" }) });
-    return { provider: "azure", run_id: runId, cancel_requested: true };
+    return { provider: "azure", run_id: runId, runner_id: runnerId, graceful_shutdown_requested: false, cancel_requested: true };
   }
   if (name === "localmcp_hub_logs") {
     const logId = Number(args.log_id);
