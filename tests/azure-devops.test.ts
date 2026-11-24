@@ -36,7 +36,7 @@ describe("Azure DevOps Hub provider", () => {
     expect(calls.some(c => c.url.includes("localmcpgo_cache.json") && c.init.method === "PUT")).toBe(true);
   });
 
-  it("bootstraps a pipeline, stores Hub credentials as secret variables and queues a unique Linux runner", async () => {
+  it("bootstraps once, caches the new pipeline, stores Hub credentials as secret variables and queues a unique Linux runner", async () => {
     const calls: any[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
       const url = String(input); calls.push({ url, init });
