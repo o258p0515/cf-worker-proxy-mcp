@@ -31,6 +31,7 @@ jobs:
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
           MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          GIT_EXECUTOR_TOKEN: ${{ secrets.GIT_EXECUTOR_TOKEN }}
           MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
           MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
           MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
@@ -57,6 +58,7 @@ jobs:
       - name: Sync runtime secrets
         env:
           MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          GIT_EXECUTOR_TOKEN: ${{ secrets.GIT_EXECUTOR_TOKEN }}
           MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
           MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
           MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
