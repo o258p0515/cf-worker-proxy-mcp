@@ -24,6 +24,7 @@ jobs:
           CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+          MCP_DOMAIN: ${{ secrets.MCP_DOMAIN }}
           MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
           GIT_EXECUTOR_TOKEN: ${{ secrets.GIT_EXECUTOR_TOKEN }}
           MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
