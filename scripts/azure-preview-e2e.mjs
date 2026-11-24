@@ -49,7 +49,14 @@ async function runOne(os) {
       lastStatus = await call("localmcp_hub_status", { provider: "azure", project, run_id: runId, runner_id: runnerId });
       if (lastStatus.runner_online === true) { runnerOnline = true; break; }
       if (lastStatus.state === "completed" || ["failed", "canceled", "cancelled"].includes(String(lastStatus.result || lastStatus.status).toLowerCase())) {
-        throw new Error("Azure pipeline finished before its runner registered: " + JSON.stringify({ os, state: lastStatus.state, result: lastStatus.result, timeline: lastStatus.timeline }));
+        const failedLogs = [];
+        for (const record of (Array.isArray(lastStatus.timeline) ? lastStatus.timeline : []).filter(item => item.result === "failed" && Number(item.log_id) > 0)) {
+          try {
+            const detail = await call("localmcp_hub_logs", { provider: "azure", project, run_id: runId, runner_id: runnerId, log_id: Number(record.log_id), start_line: 1, end_line: 120 });
+            failedLogs.push({ task: record.name, log_id: record.log_id, lines: detail.lines });
+          } catch (error) { failedLogs.push({ task: record.name, log_id: record.log_id, error: error instanceof Error ? error.message : String(error) }); }
+        }
+        throw new Error("Azure pipeline finished before its runner registered: " + JSON.stringify({ os, state: lastStatus.state, result: lastStatus.result, timeline: lastStatus.timeline, failed_task_logs: failedLogs }));
       }
       await sleep(10000);
     }
