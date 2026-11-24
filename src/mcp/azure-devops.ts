@@ -188,7 +188,7 @@ jobs:
 `;
 }
 async function ensureRunnerYaml(ctx: AzureContext, project: Project, repository: Repository, alias: string) {
-  const branch = (repository.defaultBranch || "refs/heads/main").replace(/^refs\\/heads\\//, "");
+  const branch = (repository.defaultBranch || "refs/heads/main").replace("refs/heads/", "");
   const refs = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id + "/refs?filter=heads/" + encodeURIComponent(branch));
   const ref = (refs.value || []).find((v: any) => v.name === "refs/heads/" + branch);
   if (!ref?.objectId) throw new Error("Could not resolve default branch '" + branch + "' for Azure Repos repository '" + repository.name + "'.");
