@@ -61,10 +61,13 @@ Create a JSON object at `/github_accounts`. If your Firebase project groups data
     "orgs": ["github-user"],
     "enabled": true,
     "readonly": false,
-    "is_catalog_source": true
+    "is_catalog_source": true,
+    "git_repositories": ["owner/repo"]
   }
 }
 ```
+
+For the internal LocalMCP Git credential endpoint, `git_repositories` is an exact per-account allowlist (`owner/repo` or a GitHub HTTPS URL). Missing or empty lists deny credential issuance. Successful and denied repository checks emit structured, secret-free Worker audit logs; PAT values are never included in those events.
 
 Recommended RTDB Security Rules: `{ "rules": { ".read": false, ".write": false } }`.
 
