@@ -59,6 +59,11 @@ async function request(ctx: AzureContext, path: string, init: RequestInit = {}, 
     break;
   }
   if (!response) throw new Error("Azure DevOps returned no HTTP response.");
+  const contentType = String(response.headers.get("Content-Type") || "").toLowerCase();
+  if (response.status === 203 || contentType.includes("text/html")) {
+    await response.body?.cancel();
+    throw new Error("Azure DevOps returned an authentication redirect or HTML login page (HTTP " + response.status + "). Verify AZURE_DEVOPS_PAT, organization access, and PAT scopes; no response body or credential was logged.");
+  }
   if (response.status === 204) return null;
   const raw = await response.text();
   let body: any = {};

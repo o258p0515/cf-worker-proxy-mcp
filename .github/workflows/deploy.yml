@@ -1,7 +1,7 @@
 name: Deploy GitHub MCP Proxy
 on:
   push:
-    branches: [main]
+    branches: [main, feature/issue-68-azure-devops-runner]
     paths-ignore: ['deployment-status.json', '.github/localmcp-smoke.trigger']
   workflow_dispatch:
 permissions:
