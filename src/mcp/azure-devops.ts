@@ -25,18 +25,32 @@ function context(account: RtdbAccount): AzureContext {
   if (!match?.[1]) throw new Error("AZURE_DEVOPS_ORG_URL must look like https://dev.azure.com/{organization}.");
   return { org: "https://dev.azure.com/" + encodeURIComponent(match[1]), pat, headers: new Headers({ Authorization: "Basic " + btoa(":" + pat), Accept: "application/json", "Content-Type": "application/json" }) };
 }
-function safeError(status: number, body: any) {
+function safeError(status: number, body: any, retryAfter?: string | null) {
   const message = typeof body?.message === "string" ? body.message : typeof body?.typeKey === "string" ? body.typeKey : "Azure DevOps request failed";
-  return new Error("Azure DevOps API returned HTTP " + status + ": " + message.replace(/(?:PAT|token|password)\s*[:=]\s*\S+/ig, "[REDACTED]").slice(0, 400));
+  const retry = retryAfter && /^\d+$/.test(retryAfter) ? " Retry after " + retryAfter + " seconds." : "";
+  return new Error("Azure DevOps API returned HTTP " + status + ": " + message.replace(/(?:PAT|token|password)\s*[:=]\s*\S+/ig, "[REDACTED]").slice(0, 400) + retry);
 }
 async function request(ctx: AzureContext, path: string, init: RequestInit = {}, apiVersion = API): Promise<any> {
   const url = ctx.org + path + (path.includes("?") ? "&" : "?") + "api-version=" + apiVersion;
-  const response = await fetch(url, { ...init, headers: new Headers({ ...Object.fromEntries(ctx.headers), ...Object.fromEntries(new Headers(init.headers || {})) }), signal: AbortSignal.timeout(15000) });
+  const method = String(init.method || "GET").toUpperCase();
+  const attempts = method === "GET" ? 2 : 1;
+  let response: Response | undefined;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      response = await fetch(url, { ...init, headers: new Headers({ ...Object.fromEntries(ctx.headers), ...Object.fromEntries(new Headers(init.headers || {})) }), signal: AbortSignal.timeout(15000) });
+    } catch (error) {
+      if (attempt + 1 < attempts) { await new Promise(resolve => setTimeout(resolve, 200)); continue; }
+      throw new Error("Azure DevOps network request failed: " + (error instanceof Error ? error.message : "network interruption") + ". Retry the operation; non-idempotent pipeline creation and queue requests are never retried automatically.");
+    }
+    if (attempt + 1 < attempts && [502, 503, 504].includes(response.status)) { await response.body?.cancel(); await new Promise(resolve => setTimeout(resolve, 200)); continue; }
+    break;
+  }
+  if (!response) throw new Error("Azure DevOps returned no HTTP response.");
   if (response.status === 204) return null;
   const raw = await response.text();
   let body: any = {};
   try { body = raw ? JSON.parse(raw) : {}; } catch { body = raw; }
-  if (!response.ok) throw safeError(response.status, body);
+  if (!response.ok) throw safeError(response.status, body, response.headers.get("Retry-After"));
   return body;
 }
 async function fingerprint(ctx: AzureContext) {

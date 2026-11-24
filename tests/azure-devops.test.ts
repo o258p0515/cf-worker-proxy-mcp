@@ -118,4 +118,34 @@ describe("Azure DevOps Hub provider", () => {
     expect(calls.filter(url => url.includes("/_apis/git/repositories") || url.includes("/_apis/pipelines"))).toHaveLength(0);
   });
 
+  it("retries a transient idempotent Azure GET once", async () => {
+    let projectCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes("unit.firebaseio.com")) return Response.json({ azure: { ...account, localmcpgo_cache: {} } });
+      if (url.includes("/_apis/projects")) {
+        projectCalls++;
+        if (projectCalls === 1) return Response.json({ message: "temporary upstream failure" }, { status: 503 });
+        return Response.json({ value: [{ id: "project-id", name: "Project A" }] });
+      }
+      if (url.includes("/_apis/git/repositories?")) return Response.json({ value: [{ id: "repo-id", name: "runner-config" }] });
+      if (url.includes("/_apis/pipelines")) return Response.json({ value: [] });
+      if (url.includes("localmcpgo_cache.json")) return Response.json({});
+      throw new Error("Unexpected retry request: " + url);
+    }));
+    const result = await runAzureHubTool("localmcp_hub_check_secrets", { project: "Project A" }, account, "azure", env());
+    expect(result.credential_validated).toBe(true);
+    expect(projectCalls).toBe(2);
+  });
+
+  it("surfaces Azure rate-limit retry guidance without retrying writes", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes("unit.firebaseio.com")) return Response.json({ azure: { ...account, localmcpgo_cache: {} } });
+      if (url.includes("/_apis/projects")) return new Response(JSON.stringify({ message: "rate limit" }), { status: 429, headers: { "Retry-After": "30" } });
+      throw new Error("Unexpected rate-limit request: " + url);
+    }));
+    await expect(runAzureHubTool("localmcp_hub_check_secrets", {}, account, "azure", env())).rejects.toThrow(/HTTP 429.*Retry after 30 seconds/i);
+  });
+
 });
