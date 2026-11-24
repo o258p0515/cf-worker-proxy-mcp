@@ -88,8 +88,8 @@ describe("LocalMCP Go lifecycle tools", () => {
       secrets: { GIT_REPOSITORIES: '["o258p0515/localmcpcoder-go"]' }
     }, env, "personal", account);
     expect(result).toMatchObject({ git_repositories_updated: ["o258p0515/localmcpcoder-go"], saved_names: [] });
-    expect(calls.some(call => call.method === "PUT" && call.url.endsWith("/git_repositories.json"))).toBe(true);
-    expect(calls.some(call => call.url.endsWith("/localmcpgo_secrets.json"))).toBe(false);
+    expect(calls.some(call => call.method === "PUT" && new URL(call.url).pathname.endsWith("/git_repositories.json"))).toBe(true);
+    expect(calls.some(call => new URL(call.url).pathname.endsWith("/localmcpgo_secrets.json"))).toBe(false);
   });
 
   it("checks LocalMCP Go with JSON-only MCP initialize instead of negotiating SSE", async () => {
