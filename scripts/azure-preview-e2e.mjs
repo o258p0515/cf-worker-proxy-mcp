@@ -63,6 +63,10 @@ async function runOne(os) {
     const infoText = JSON.stringify(info);
     if (!infoText.toLowerCase().includes(os)) throw new Error("Runner OS mismatch; expected " + os + ": " + infoText.slice(0, 1000));
     console.log("Runner system_info passed: " + infoText.slice(0, 1000));
+    const shellMarker = "ISSUE68_" + os.toUpperCase() + "_SHELL_OK";
+    const shellResult = await call("bash", { command: os === "windows" ? "Write-Output " + shellMarker : "printf '" + shellMarker + "\\n'", runner_id: runnerId });
+    if (!JSON.stringify(shellResult).includes(shellMarker)) throw new Error("Runner shell execution failed for " + os + ": " + JSON.stringify(shellResult).slice(0, 1000));
+    console.log("Runner shell passed: " + shellMarker);
 
     const logList = await call("localmcp_hub_logs", { provider: "azure", project, run_id: runId });
     const logs = Array.isArray(logList.logs) ? logList.logs : [];
