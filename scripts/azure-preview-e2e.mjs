@@ -9,6 +9,7 @@ let rpcId = 0;
 async function call(name, args = {}) {
   const response = await fetch(endpoint, {
     method: "POST",
+    signal: AbortSignal.timeout(30000),
     headers: { "X-API-Key": token, "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/call", params: { name, arguments: args } })
   });
@@ -75,13 +76,17 @@ async function runOne(os) {
     if (!JSON.stringify(shellResult).includes(shellMarker)) throw new Error("Runner shell execution failed for " + os + ": " + JSON.stringify(shellResult).slice(0, 1000));
     console.log("Runner shell passed: " + shellMarker);
 
+    console.log("E2E: requesting Azure log list and timeline");
     const logList = await call("localmcp_hub_logs", { provider: "azure", project, run_id: runId, runner_id: runnerId });
+    console.log("E2E: Azure log list and timeline response received");
     const logs = Array.isArray(logList.logs) ? logList.logs : [];
     if (!logs.length) throw new Error("Azure Build Logs API returned no log records for run " + runId + ".");
     const taskLogs = (Array.isArray(logList.timeline) ? logList.timeline : []).filter(record => record.type === "Task" && Number(record.log_id) > 0);
     if (!taskLogs.length) throw new Error("Azure timeline did not identify a Task log: " + JSON.stringify(logList.timeline));
     const selectedTask = taskLogs.find(record => record.result === "succeeded") || taskLogs[0];
+    console.log("E2E: requesting bounded Azure task log page");
     const page = await call("localmcp_hub_logs", { provider: "azure", project, run_id: runId, runner_id: runnerId, log_id: Number(selectedTask.log_id), start_line: 1, end_line: 30 });
+    console.log("E2E: bounded Azure task log page received");
     if (!Array.isArray(page.lines)) throw new Error("Azure Build Logs API did not return a bounded line page.");
     console.log("Azure log pagination passed: " + JSON.stringify({ os, log_id: page.log_id, start_line: page.start_line, end_line: page.end_line, returned_lines: page.lines.length, nextStartLine: page.nextStartLine }));
   } finally {
