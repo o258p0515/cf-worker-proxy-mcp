@@ -50,7 +50,7 @@ function normalize(raw: unknown): Record<string, RtdbAccount> {
 }
 
 export async function getAccounts(env: Env, options: { forceRefresh?: boolean } = {}): Promise<Record<string, RtdbAccount>> {
-  const ttl = Math.max(30, Number(env.RTDB_CACHE_TTL_SECONDS) || 300);
+  const ttl = Math.max(30, Number(env.RTDB_CACHE_TTL_SECONDS) || 3600);
   if (!options.forceRefresh && memory && memory.expires > Date.now()) return memory.accounts;
   if (!options.forceRefresh) {
     const cached = await env.CACHE_KV.get("rtdb:accounts:v1");

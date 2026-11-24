@@ -6,6 +6,16 @@ export class SseSessionDO {
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private env: Env;
   private auth: AuthContext | null = null;
+  private lastActivityAt = 0;
+  private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+  private closeStream() {
+    if (this.keepaliveTimer) clearInterval(this.keepaliveTimer);
+    this.keepaliveTimer = null;
+    const writer = this.writer;
+    this.writer = null;
+    if (writer) writer.close().catch(() => { });
+  }
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -49,24 +59,27 @@ export class SseSessionDO {
       };
     }
     if (req.method === "GET" && u.pathname.endsWith("/sse")) {
-      if (this.writer) try { await this.writer.close(); } catch { }
+      this.closeStream();
       const stream = new TransformStream<Uint8Array, Uint8Array>();
       this.writer = stream.writable.getWriter();
+      this.lastActivityAt = Date.now();
       const sessionId = u.searchParams.get("sessionId") || "";
-      await this.writer.write(new TextEncoder().encode("event: endpoint\ndata: /messages?sessionId=" + encodeURIComponent(sessionId) + "\n\n"));
+      this.writer.write(new TextEncoder().encode("event: endpoint\ndata: /messages?sessionId=" + encodeURIComponent(sessionId) + "\n\n")).catch(() => this.closeStream());
       const writer = this.writer;
-      const timer = setInterval(() => {
-        writer.write(new TextEncoder().encode(": keepalive\n\n")).catch(() => clearInterval(timer));
+      const idleTimeoutMs = 20 * 60 * 1000;
+      this.keepaliveTimer = setInterval(() => {
+        if (Date.now() - this.lastActivityAt >= idleTimeoutMs) {
+          this.closeStream();
+          return;
+        }
+        writer.write(new TextEncoder().encode(": keepalive\n\n")).catch(() => this.closeStream());
       }, 25000);
-      req.signal.addEventListener("abort", () => {
-        clearInterval(timer);
-        writer.close().catch(() => { });
-        this.writer = null;
-      }, { once: true });
+      req.signal.addEventListener("abort", () => this.closeStream(), { once: true });
       return new Response(stream.readable, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" } });
     }
     if (req.method === "POST" && u.pathname.endsWith("/messages")) {
       if (!this.writer) return Response.json({ error: "SSE session not found or closed. Reconnect to /sse." }, { status: 404 });
+      this.lastActivityAt = Date.now();
       const msg = await req.json() as JsonRpc;
       const response = await handleJsonRpcMessage(msg, this.env, this.auth || { method: "static_token", subject: "sse" });
       if (response) await this.writer.write(new TextEncoder().encode("event: message\ndata: " + JSON.stringify(response) + "\n\n"));
