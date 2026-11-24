@@ -192,8 +192,8 @@ async function requestRunnerShutdown(account: RtdbAccount, env: any, authContext
   const hubState = await findHubRunner(account, env, authContext, runnerId);
   if (!hubState.online) return false;
   const command = os === "windows"
-    ? '$runnerPid = (Get-CimInstance Win32_Process -Filter "Name=\'localmcpcoder-mcp.exe\'" | Select-Object -First 1 -ExpandProperty ProcessId); if ($runnerPid) { Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 2; Stop-Process -Id $runnerPid") -WindowStyle Hidden }'
-    : 'pids=$(ps -eo pid=,comm= | awk \'$2 == "localmcpcoder-m" {print $1}\'); if [ -n "$pids" ]; then nohup sh -c "sleep 1; kill -TERM $pids" >/dev/null 2>&1 & fi';
+    ? `Start-Process powershell.exe -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 1; Invoke-RestMethod -Uri http://127.0.0.1:8787/internal/shutdown -Method Post -Headers @{Authorization="Bearer $env:MCP_TOKEN"} | Out-Null') -WindowStyle Hidden`
+    : `nohup sh -c 'sleep 1; curl -fsS -X POST -H "Authorization: Bearer $MCP_TOKEN" http://127.0.0.1:8787/internal/shutdown' >/dev/null 2>&1 </dev/null &`;
   await callHubTool(HUB_TOOL_PREFIX + "bash", { command, runner_id: runnerId, timeout_ms: 10000 }, account, authContext, String(secrets(account).MCP_TOKEN || env.MCP_TOKEN || ""), env.LOCALMCP_HUB, env.LOCALMCP_HUB_ORIGIN);
   return true;
 }
