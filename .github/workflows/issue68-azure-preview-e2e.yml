@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feature/issue-68-azure-devops-runner
+  workflow_dispatch: {}
 permissions:
   contents: read
 concurrency:
