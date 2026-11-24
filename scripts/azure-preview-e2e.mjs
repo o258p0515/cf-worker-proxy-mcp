@@ -112,7 +112,7 @@ async function runOne(os) {
 async function cleanupStaleIssue68Runs() {
   const history = await call("localmcp_hub_runs", { provider: "azure", project });
   const runs = Array.isArray(history.runs) ? history.runs : [];
-  const cutoff = Date.now() - 10 * 60 * 1000;
+  const cutoff = Date.now() - 5 * 60 * 1000;
   for (const run of runs) {
     const runnerName = String(run.templateParameters?.runner_name || run.runner_name || "");
     const queuedAt = Date.parse(run.created_at || run.queueTime || "");
