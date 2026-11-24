@@ -1,15 +1,26 @@
 import type { Env } from "../types";
 import { resolveAccount } from "../rtdb/account-store";
-import { verifyGitHubActionsOIDC } from "../auth/github-oidc";
 const OPERATIONS = new Set(["clone", "fetch", "pull", "push"]);
 const HEADERS = { "Cache-Control": "no-store, private, max-age=0", Pragma: "no-cache", "X-Content-Type-Options": "nosniff" };
 function reply(body: Record<string, unknown>, status = 200): Response {
   return Response.json(body, { status, headers: HEADERS });
 }
+async function constantTimeEqual(a: string, b: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const [left, right] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b))
+  ]);
+  const x = new Uint8Array(left), y = new Uint8Array(right);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i]! ^ y[i]!;
+  return diff === 0 && a.length > 0 && b.length > 0;
+}
 export async function handleGitCredential(req: Request, env: Env): Promise<Response> {
   if (req.method !== "POST") return reply({ error: "method_not_allowed" }, 405);
+  if (!env.GIT_EXECUTOR_TOKEN || env.GIT_EXECUTOR_TOKEN.length < 32) return reply({ error: "executor_auth_not_configured" }, 503);
   const bearer = req.headers.get("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1] || "";
-  if (!bearer || !await verifyGitHubActionsOIDC(bearer)) return reply({ error: "unauthorized" }, 401);
+  if (!await constantTimeEqual(bearer, env.GIT_EXECUTOR_TOKEN)) return reply({ error: "unauthorized" }, 401);
   let input: Record<string, unknown>;
   try {
     const raw = await req.text();
