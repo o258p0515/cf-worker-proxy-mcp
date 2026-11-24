@@ -190,7 +190,11 @@ export async function runLocalMcpTool(
       if (typeof raw !== "string" || raw.length > 12000) throw new Error("GIT_REPOSITORIES must be a JSON array of owner/repo strings.");
       let parsed: unknown;
       try { parsed = JSON.parse(raw); } catch { throw new Error("GIT_REPOSITORIES must contain valid JSON."); }
-      if (!Array.isArray(parsed) || parsed.length > 100 || parsed.some(value => typeof value !== "string" || !/^[A-Za-z0-9_.-]{1,100}\\/[A-Za-z0-9_.-]{1,100}$/.test(value.trim()))) {
+      if (!Array.isArray(parsed) || parsed.length > 100 || parsed.some(value => {
+        if (typeof value !== "string") return true;
+        const parts = value.trim().split("/");
+        return parts.length !== 2 || !/^[A-Za-z0-9_.-]{1,100}$/.test(parts[0]!) || !/^[A-Za-z0-9_.-]{1,100}$/.test(parts[1]!);
+      })) {
         throw new Error("GIT_REPOSITORIES must be an array of up to 100 exact owner/repo values.");
       }
       repositoriesUpdated = [...new Set(parsed.map(value => (value as string).trim().toLowerCase()))];

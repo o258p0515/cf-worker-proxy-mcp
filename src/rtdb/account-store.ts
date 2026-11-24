@@ -133,7 +133,7 @@ export async function setGitRepositories(env: Env, alias: string, repositories: 
   if (!accounts[alias]?.enabled) throw new Error("Cannot configure Git repository allowlist for an unknown or disabled account.");
   if (!activeRtdbUrl) throw new Error("RTDB account path could not be resolved");
   const url = new URL(activeRtdbUrl);
-  url.pathname = url.pathname.replace(/\\.json$/, "") + "/" + encodeURIComponent(alias) + "/git_repositories.json";
+  url.pathname = url.pathname.slice(0, -5) + "/" + encodeURIComponent(alias) + "/git_repositories.json";
   const serviceAccount = resolveServiceAccountFromEnv(env);
   const headers = new Headers({ "Content-Type": "application/json" });
   if (serviceAccount) {
