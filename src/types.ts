@@ -2,6 +2,7 @@ export interface RtdbAccount {
   username: string; token: string; description: string; orgs: string[];
   enabled: boolean; readonly: boolean; is_catalog_source?: boolean;
   localmcpgo_secrets?: Record<string, string>;
+  git_repositories?: string[];
 }
 export interface Env {
   MCP_TOKEN: string; MCP_API_PASSPHRASE?: string; MCP_OAUTH_CLIENT_ID?: string; MCP_OAUTH_CLIENT_SECRET?: string;
