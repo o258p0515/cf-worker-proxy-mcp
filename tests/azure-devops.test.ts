@@ -66,7 +66,7 @@ describe("Azure DevOps Hub provider", () => {
     expect(result).toMatchObject({ provider: "azure", run_id: 991, runner_id: "az-linux-991", os: "linux", duration_seconds: 3300, state: "running", variable_group: { id: 12, name: "LocalMCP-Hub-azure", secret_values_returned: false, authorized: true, pipeline_id: 77 } });
     const yamlPush = calls.find(c => c.url.includes("/_apis/git/repositories/repo-id/pushes"));
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("LOCALMCP_HUB_RUNNER_TEMPLATE: v5");
-    expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("$(runner_vm_image)");
+    expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("$(vmImage)");
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("parameters:");
     const runWrite = calls.find(c => c.url.includes("/runs?") && c.init.method === "POST");
     expect(JSON.parse(runWrite.init.body).templateParameters.os).toBe("linux");
