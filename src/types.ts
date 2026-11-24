@@ -1,6 +1,6 @@
 export interface RtdbAccount {
   username: string; token: string; description: string; orgs: string[];
-  enabled: boolean; readonly: boolean; is_catalog_source?: boolean;
+  enabled: boolean; readonly: boolean; is_catalog_source?: boolean; git_repositories?: string[];
   localmcpgo_secrets?: Record<string, string>;
 }
 export interface Env {
