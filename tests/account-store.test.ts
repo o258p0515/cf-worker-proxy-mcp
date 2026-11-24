@@ -20,7 +20,7 @@ function env(extra: any = {}) {
   } as any;
 }
 const defaultData = {
-  personal: { username: "me", token: "ghp_never-leak", enabled: true, orgs: ["org"] },
+  personal: { username: "me", token: "dummy-account-credential", enabled: true, orgs: ["org"], git_repositories: ["owner/repo"] },
   disabled: { username: "off", token: "ghp_disabled", enabled: false }
 };
 
@@ -34,10 +34,11 @@ describe("Firebase account store", () => {
   it("loads legacy RTDB auth and encrypts cached PATs", async () => {
     const e = env();
     const accounts = await getAccounts(e);
-    expect(accounts["personal"]!.token).toBe("ghp_never-leak");
+    expect(accounts["personal"]!.token).toBe("dummy-account-credential");
+    expect(accounts["personal"]!.git_repositories).toEqual(["owner/repo"]);
     const cached = e.CACHE_KV.values.get("rtdb:accounts:v1");
     expect(cached).toBeTruthy();
-    expect(cached).not.toContain("ghp_never-leak");
+    expect(cached).not.toContain("dummy-account-credential");
     const publicAccounts = await listPublicAccounts(e);
     expect(publicAccounts).toHaveLength(1);
     expect(publicAccounts[0]).not.toHaveProperty("token");
