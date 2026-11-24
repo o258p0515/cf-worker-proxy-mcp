@@ -104,6 +104,7 @@ async function runOne(os) {
       }
       console.log("Azure runner cleanup: " + JSON.stringify({ os, run_id: runId, state: finalStatus?.state, result: finalStatus?.result, runner_online: finalStatus?.runner_online }));
       if (finalStatus?.state !== "completed" || finalStatus?.runner_online === true) throw new Error("Runner did not fully stop and disconnect: " + runnerId);
+      if (finalStatus?.result !== "succeeded") throw new Error("Azure pipeline did not complete successfully after runner shutdown: " + JSON.stringify({ run_id: runId, result: finalStatus?.result, runner_online: finalStatus?.runner_online }));
     }
   }
   console.log("LIVE_AZURE_E2E_PASS " + JSON.stringify({ os, run_id: runId, runner_id: runnerId, runner_online_verified: runnerOnline, cleanup_requested: runId > 0 }));
