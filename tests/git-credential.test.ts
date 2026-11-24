@@ -55,7 +55,7 @@ describe("internal Git credential provider", () => {
     }));
     const response = await handleGitCredential(new Request("https://proxy.test/internal/runner/git-credential", {
       method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" },
-      body: JSON.stringify({ account: "personal", operation: "clone" })
+      body: JSON.stringify({ account: "personal", operation: "clone", repository: "https://github.com/o258p0515/localmcpcoder-go.git" })
     }), makeEnv());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ account: "personal", username: "octocat", credential: "dummy-test-credential" });
