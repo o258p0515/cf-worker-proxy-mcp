@@ -23,7 +23,7 @@ describe("internal Git credential provider", () => {
       const headers = new Headers({ "Content-Type": "application/json" });
       if (authorization) headers.set("Authorization", authorization);
       const response = await handleGitCredential(new Request("https://proxy.test/internal/runner/git-credential", {
-        method: "POST", headers, body: JSON.stringify({ account: "personal", operation: "clone" })
+        method: "POST", headers, body: JSON.stringify({ account: "personal", operation: "clone", repository: "https://github.com/o258p0515/localmcpcoder-go.git" })
       }), makeEnv());
       expect(response.status).toBe(401);
       expect(await response.json()).toEqual({ error: "unauthorized" });
@@ -46,7 +46,7 @@ describe("internal Git credential provider", () => {
     expect(response.headers.get("Cache-Control")).toContain("no-store");
   });
   it("returns the selected RTDB credential only to the dedicated Git executor token", async () => {
-    const original = { personal: { username: "octocat", token: "ghp_test_private", enabled: true, readonly: false } };
+    const original = { personal: { username: "octocat", token: "dummy-test-credential", enabled: true, readonly: false, git_repositories: ["o258p0515/localmcpcoder-go"] } };
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: any) => {
       const url = String(input); calls.push(url);
@@ -58,19 +58,40 @@ describe("internal Git credential provider", () => {
       body: JSON.stringify({ account: "personal", operation: "clone" })
     }), makeEnv());
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ account: "personal", username: "octocat", credential: "ghp_test_private" });
+    expect(await response.json()).toEqual({ account: "personal", username: "octocat", credential: "dummy-test-credential" });
     expect(calls.some(url => url.includes("unit.firebaseio.com"))).toBe(true);
-    expect(original.personal.token).toBe("ghp_test_private");
+    expect(original.personal.token).toBe("dummy-test-credential");
     expect(response.headers.get("Cache-Control")).toContain("no-store");
   });
-  it("does not return readonly account credentials for push", async () => {
+  it("denies repositories outside the per-account allowlist and records a secret-free audit event", async () => {
+    const audit = vi.spyOn(console, "info").mockImplementation(() => {});
     vi.stubGlobal("fetch", vi.fn(async (input: any) => {
-      if (String(input).includes("unit.firebaseio.com")) return Response.json({ personal: { username: "octocat", token: "ghp_readonly", enabled: true, readonly: true } });
+      if (String(input).includes("unit.firebaseio.com")) return Response.json({
+        personal: { username: "octocat", token: "dummy-test-credential", enabled: true, readonly: false, git_repositories: ["o258p0515/allowed-repo"] }
+      });
       throw new Error("unexpected URL " + input);
     }));
     const response = await handleGitCredential(new Request("https://proxy.test/internal/runner/git-credential", {
       method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" },
-      body: JSON.stringify({ account: "personal", operation: "push" })
+      body: JSON.stringify({ account: "personal", operation: "clone", repository: "https://github.com/o258p0515/blocked-repo.git" })
+    }), makeEnv());
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "repository_not_allowlisted" });
+    expect(audit).toHaveBeenCalledOnce();
+    const auditText = String(audit.mock.calls[0]?.[0]);
+    expect(auditText).toContain("git_credential_denied");
+    expect(auditText).toContain("o258p0515/blocked-repo");
+    expect(auditText).not.toContain("dummy-test-credential");
+    audit.mockRestore();
+  });
+  it("does not return readonly account credentials for push", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: any) => {
+      if (String(input).includes("unit.firebaseio.com")) return Response.json({ personal: { username: "octocat", token: "dummy-readonly-credential", enabled: true, readonly: true } });
+      throw new Error("unexpected URL " + input);
+    }));
+    const response = await handleGitCredential(new Request("https://proxy.test/internal/runner/git-credential", {
+      method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ account: "personal", operation: "push", repository: "https://github.com/o258p0515/localmcpcoder-go.git" })
     }), makeEnv());
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "account_readonly" });
