@@ -75,7 +75,6 @@ jobs:
           echo "$ACCOUNTS" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const a=JSON.parse(r.result?.content?.[0]?.text||"[]");const x=a.find(v=>v.alias==="azure-aerielaaeriel651971");if(!x||!x.providers?.includes("azure"))process.exit(1);console.log("Azure-only RTDB account discovered without exposing credentials")})'
       - name: Provision, execute and clean up Azure Linux and Windows runners
         env:
-          PREVIEW_DOMAIN: ${{ env.PREVIEW_DOMAIN }}
           MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
         run: node scripts/azure-preview-e2e.mjs
       - name: Record isolated preview and test result
