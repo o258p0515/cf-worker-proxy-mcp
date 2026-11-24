@@ -46,7 +46,7 @@ async function runOne(os) {
 
     let lastStatus;
     for (let attempt = 0; attempt < 48; attempt++) {
-      lastStatus = await call("localmcp_hub_status", { provider: "azure", project, run_id: runId });
+      lastStatus = await call("localmcp_hub_status", { provider: "azure", project, run_id: runId, runner_id: runnerId });
       if (lastStatus.runner_online === true) { runnerOnline = true; break; }
       if (lastStatus.state === "completed" || ["failed", "canceled", "cancelled"].includes(String(lastStatus.result || lastStatus.status).toLowerCase())) {
         throw new Error("Azure pipeline finished before its runner registered: " + JSON.stringify({ os, state: lastStatus.state, result: lastStatus.result, timeline: lastStatus.timeline }));
@@ -68,7 +68,7 @@ async function runOne(os) {
     if (!JSON.stringify(shellResult).includes(shellMarker)) throw new Error("Runner shell execution failed for " + os + ": " + JSON.stringify(shellResult).slice(0, 1000));
     console.log("Runner shell passed: " + shellMarker);
 
-    const logList = await call("localmcp_hub_logs", { provider: "azure", project, run_id: runId });
+    const logList = await call("localmcp_hub_logs", { provider: "azure", project, run_id: runId, runner_id: runnerId });
     const logs = Array.isArray(logList.logs) ? logList.logs : [];
     if (!logs.length) throw new Error("Azure Build Logs API returned no log records for run " + runId + ".");
     const page = await call("localmcp_hub_logs", { provider: "azure", project, run_id: runId, log_id: Number(logs[0].id), start_line: 1, end_line: 30 });
@@ -76,10 +76,10 @@ async function runOne(os) {
     console.log("Azure log pagination passed: " + JSON.stringify({ os, log_id: page.log_id, start_line: page.start_line, end_line: page.end_line, returned_lines: page.lines.length, nextStartLine: page.nextStartLine }));
   } finally {
     if (runId > 0) {
-      await call("localmcp_hub_stop", { provider: "azure", project, run_id: runId });
+      await call("localmcp_hub_stop", { provider: "azure", project, run_id: runId, runner_id: runnerId });
       let finalStatus;
       for (let attempt = 0; attempt < 18; attempt++) {
-        finalStatus = await call("localmcp_hub_status", { provider: "azure", project, run_id: runId });
+        finalStatus = await call("localmcp_hub_status", { provider: "azure", project, run_id: runId, runner_id: runnerId });
         if (finalStatus.state === "completed" && finalStatus.runner_online !== true) break;
         await sleep(5000);
       }
