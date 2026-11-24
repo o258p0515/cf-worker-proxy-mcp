@@ -46,7 +46,7 @@ describe("Azure DevOps Hub provider", () => {
       if (url.includes("/_apis/git/repositories?") && url.includes("/Project%20A/")) return Response.json({ value: [{ id: "repo-id", name: "runner-config", defaultBranch: "refs/heads/main" }] });
       if (url.includes("/runs?") && init.method === "POST") return Response.json({ id: 991, state: "running", createdDate: "2026-11-24T12:00:00Z", _links: { web: { href: "https://dev.azure.com/test/run/991" } } });
       if (url.includes("/_apis/pipelines/77?") && init.method !== "POST") return Response.json({ id: 77, name: "LocalMCP Hub Runner", configuration: { type: "yaml", path: "/azure-pipelines.yml", repository: { id: "repo-id" } } });
-      if (url.includes("/_apis/build/definitions/77") && init.method === "GET") return Response.json({ id: 77, revision: 1, name: "LocalMCP Hub Runner", variables: {} });
+      if (url.includes("/_apis/build/definitions/77") && (!init.method || init.method === "GET")) return Response.json({ id: 77, revision: 1, name: "LocalMCP Hub Runner", variables: {} });
       if (url.includes("/_apis/build/definitions/77") && init.method === "PUT") return Response.json({ id: 77, revision: 2, variables: JSON.parse(init.body).variables });
       if (url.includes("/_apis/pipelines") && !url.includes("pipelinepermissions")) {
         if (init.method === "POST") return Response.json({ id: 77, name: "LocalMCP Hub Runner", url: "https://dev.azure.com/test/pipeline/77" });
