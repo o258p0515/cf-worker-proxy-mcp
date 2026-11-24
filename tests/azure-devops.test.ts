@@ -75,6 +75,9 @@ describe("Azure DevOps Hub provider", () => {
     const groupVariables = JSON.parse(groupWrite.init.body).variables;
     expect(groupVariables.MCP_TOKEN).toMatchObject({ value: TOKEN, isSecret: true });
     expect(groupVariables.HUB_URLS).toMatchObject({ value: "https://hub.o258p0515.dpdns.org", isSecret: true });
+    expect(groupVariables.MCP_SHUTDOWN_TOKEN).toMatchObject({ isSecret: true });
+    expect(groupVariables.MCP_SHUTDOWN_TOKEN.value).not.toBe(TOKEN);
+    expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("MCP_SHUTDOWN_TOKEN: $(MCP_SHUTDOWN_TOKEN)");
     const groupList = calls.find(c => c.url.includes("/_apis/distributedtask/variablegroups?"));
     expect(groupList.url).toContain("/project-id/_apis/distributedtask/variablegroups?");
     const permissionCall = calls.find(c => c.url.includes("pipelinepermissions/variablegroup"));
