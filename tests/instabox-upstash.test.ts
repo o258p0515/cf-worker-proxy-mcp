@@ -112,6 +112,11 @@ describe("InstaBox & Upstash Box Hub providers", () => {
       const method = String(init.method || "GET");
       calls.push({ url, method });
 
+      if (url === "https://api.instabox.sh/v1/machines" && method === "GET") {
+        return Response.json({
+          machines: [{ id: "m_cached00000000000000000001", name: "ib-persisted", state: "stopped", template: { id: "agent-browser" } }]
+        });
+      }
       if (url === "https://api.instabox.sh/v1/machines/m_cached00000000000000000001" && method === "GET") {
         return Response.json({ id: "m_cached00000000000000000001", name: "ib-persisted", state: "stopped", template: { id: "agent-browser" } });
       }
