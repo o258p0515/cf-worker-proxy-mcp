@@ -1,4 +1,5 @@
 import type { AuthContext, RtdbAccount } from "../types";
+import { writeCachedSandboxRunner } from "../rtdb/account-store";
 import { callHubTool, HUB_TOOL_PREFIX } from "./hub";
 
 const DEFAULT_BASE_URL = "https://api.instabox.sh";
@@ -117,8 +118,8 @@ async function waitOperation(ctx: InstaBoxContext, opId: string, maxAttempts = 1
   throw new Error(`Timed out waiting for InstaBox operation ${opId} to succeed.`);
 }
 
-async function resolveMachineId(ctx: InstaBoxContext, args: Record<string, unknown>): Promise<string> {
-  const direct = [args.machine_id, args.box_id, args.id, args.runner_id].find(
+async function resolveMachineId(ctx: InstaBoxContext, args: Record<string, unknown>, cachedId?: string): Promise<string> {
+  const direct = [args.machine_id, args.box_id, args.id, args.runner_id, cachedId].find(
     v => typeof v === "string" && v.trim()
   ) as string | undefined;
   if (direct) {
@@ -249,6 +250,7 @@ export async function runInstaBoxHubTool(
 ) {
   const ctx = context(account);
   const accountSecrets = secrets(account);
+  const cachedRunner = account.localmcpgo_runners?.instabox;
 
   if (name === "localmcp_hub_check_secrets") {
     const [me, templatesRes] = await Promise.all([
@@ -272,6 +274,7 @@ export async function runInstaBoxHubTool(
       hub_urls_source: hubUrlConfig.source,
       token_source: accountSecrets.MCP_TOKEN ? "RTDB localmcpgo_secrets" : hubToken ? "Proxy runtime MCP_TOKEN" : null,
       optional_configured_names: optionalConfigured,
+      cached_runner: cachedRunner || null,
       values_returned: false
     };
   }
@@ -287,27 +290,42 @@ export async function runInstaBoxHubTool(
       throw new Error("duration_seconds must be an integer between 60 and 86400.");
     }
 
-    const existingRef = [args.machine_id, args.box_id, args.id, args.runner_id].find(
+    const explicitRef = [args.machine_id, args.box_id, args.id, args.runner_id].find(
       v => typeof v === "string" && v.trim()
     ) as string | undefined;
+    const reuseCached = args.reuse_cached !== false;
 
-    let machine: any = {};
+    let machine: any = null;
     let machineId = "";
     let resumed = false;
+    let cacheSource: "explicit" | "rtdb_cache" | "new" = "new";
 
-    if (existingRef) {
-      machineId = await resolveMachineId(ctx, args);
-      machine = await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}`);
-      if (String(machine?.state || "").toLowerCase() !== "running") {
-        const startOp = await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}/start`, {
-          method: "POST",
-          body: JSON.stringify({})
-        });
-        const completed = startOp?.id ? await waitOperation(ctx, String(startOp.id)) : startOp;
-        machine = completed?.machine || (await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}`));
+    const candidateRef = explicitRef || (reuseCached && cachedRunner?.id ? cachedRunner.id : undefined);
+    if (candidateRef) {
+      try {
+        const resolvedId = await resolveMachineId(ctx, args, candidateRef);
+        const existing = await request(ctx, `/v1/machines/${encodeURIComponent(resolvedId)}`);
+        if (existing?.id) {
+          machineId = String(existing.id);
+          machine = existing;
+          if (String(machine.state || "").toLowerCase() !== "running") {
+            const startOp = await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}/start`, {
+              method: "POST",
+              body: JSON.stringify({})
+            });
+            const completed = startOp?.id ? await waitOperation(ctx, String(startOp.id)) : startOp;
+            machine = completed?.machine || (await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}`));
+          }
+          resumed = true;
+          cacheSource = explicitRef ? "explicit" : "rtdb_cache";
+        }
+      } catch (err) {
+        if (explicitRef) throw err;
+        // Cached machine no longer exists on InstaBox; fall back to creating a fresh one.
       }
-      resumed = true;
-    } else {
+    }
+
+    if (!machineId) {
       const initialName = typeof args.runner_name === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(args.runner_name.trim())
         ? args.runner_name.trim()
         : "instabox";
@@ -364,6 +382,15 @@ export async function runInstaBoxHubTool(
       body: JSON.stringify({ cmd })
     });
     const hubState = await waitHubRunnerOnline(account, env, authContext, runnerId);
+
+    await writeCachedSandboxRunner(env, alias, "instabox", {
+      id: machineId,
+      runner_id: runnerId,
+      name: runnerName,
+      template: templateId,
+      updated_at: new Date().toISOString()
+    }).catch(() => null);
+
     return {
       provider: "instabox",
       account: alias,
@@ -374,6 +401,7 @@ export async function runInstaBoxHubTool(
       os: "linux",
       state: machine.state || "running",
       resumed,
+      cache_source: cacheSource,
       runner_tags: fullTags,
       duration_seconds: requestedDuration,
       bootstrap_exit_code: execRes?.exitCode ?? 0,
@@ -389,6 +417,7 @@ export async function runInstaBoxHubTool(
     return {
       provider: "instabox",
       account: alias,
+      cached_runner: cachedRunner || null,
       runs: machines.map((m: any) => ({
         machine_id: m.id,
         runner_id: `ib-${m.id}`,
@@ -396,12 +425,13 @@ export async function runInstaBoxHubTool(
         state: m.state,
         desired_state: m.desiredState,
         template: m.template?.id,
+        cached_in_rtdb: cachedRunner?.id === m.id,
         created_at: m.createdAt
       }))
     };
   }
 
-  const machineId = await resolveMachineId(ctx, args);
+  const machineId = await resolveMachineId(ctx, args, cachedRunner?.id);
   const runnerId = `ib-${machineId}`;
 
   if (name === "localmcp_hub_status") {
@@ -430,6 +460,7 @@ export async function runInstaBoxHubTool(
       state: machine?.state,
       desired_state: machine?.desiredState,
       template: machine?.template?.id,
+      cached_in_rtdb: cachedRunner?.id === machineId,
       runner_online: hubState.online,
       hub_runner: hubState.runner,
       process: String(psRes?.stdout || "").trim()
@@ -463,6 +494,9 @@ export async function runInstaBoxHubTool(
         headers: { "X-Confirm-Delete": confirmName }
       });
       if (op?.id) await waitOperation(ctx, String(op.id)).catch(() => null);
+      if (cachedRunner?.id === machineId) {
+        await writeCachedSandboxRunner(env, alias, "instabox", null).catch(() => null);
+      }
       return {
         provider: "instabox",
         account: alias,
@@ -476,12 +510,20 @@ export async function runInstaBoxHubTool(
       body: JSON.stringify({})
     });
     if (op?.id) await waitOperation(ctx, String(op.id)).catch(() => null);
+    await writeCachedSandboxRunner(env, alias, "instabox", {
+      id: machineId,
+      runner_id: runnerId,
+      name: String(machine?.name || cachedRunner?.name || ""),
+      template: String(machine?.template?.id || cachedRunner?.template || ctx.defaultTemplate),
+      updated_at: new Date().toISOString()
+    }).catch(() => null);
     return {
       provider: "instabox",
       account: alias,
       machine_id: machineId,
       runner_id: runnerId,
-      stopped: true
+      stopped: true,
+      cached_in_rtdb: true
     };
   }
 

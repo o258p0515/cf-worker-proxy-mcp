@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runLocalMcpHubControlTool } from "../src/mcp/localmcp-hub-control";
-import { listPublicAccounts, getAccounts, clearAccountCaches } from "../src/rtdb/account-store";
+import { runLocalMcpHubControlTool } from "../mcp/localmcp-hub-control";
+import { listPublicAccounts, getAccounts, clearAccountCaches } from "../rtdb/account-store";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -97,6 +97,69 @@ describe("InstaBox & Upstash Box Hub providers", () => {
     const createCall = calls.find(c => c.url.endsWith("/v1/machines") && c.method === "POST")!;
     expect(createCall.headers.get("X-API-Key")).toBe("ibk_testsecret123456");
     expect(createCall.headers.get("Idempotency-Key")).toBeTruthy();
+  });
+
+  it("automatically resumes cached InstaBox machine from RTDB when reuse_cached is omitted", async () => {
+    const accountWithCache = {
+      ...baseAccount,
+      localmcpgo_runners: {
+        instabox: { id: "m_cached00000000000000000001", runner_id: "ib-m_cached00000000000000000001", name: "ib-persisted" }
+      }
+    };
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
+      const url = String(input);
+      const method = String(init.method || "GET");
+      calls.push({ url, method });
+
+      if (url === "https://api.instabox.sh/v1/machines/m_cached00000000000000000001" && method === "GET") {
+        return Response.json({ id: "m_cached00000000000000000001", name: "ib-persisted", state: "stopped", template: { id: "agent-browser" } });
+      }
+      if (url === "https://api.instabox.sh/v1/machines/m_cached00000000000000000001/start" && method === "POST") {
+        return Response.json({ id: "op_start_cached", state: "running" });
+      }
+      if (url.startsWith("https://api.instabox.sh/v1/operations/op_start_cached")) {
+        return Response.json({
+          id: "op_start_cached",
+          state: "succeeded",
+          machine: { id: "m_cached00000000000000000001", name: "ib-persisted", state: "running", template: { id: "agent-browser" } }
+        });
+      }
+      if (url === "https://api.instabox.sh/v1/machines/m_cached00000000000000000001/exec" && method === "POST") {
+        return Response.json({ exitCode: 0, stdout: "STARTED_PID=321\n", stderr: "" });
+      }
+      if (url === "https://hub.example.com/mcp" && method === "POST") {
+        const rpc = JSON.parse(init.body);
+        if (rpc.method === "initialize") {
+          return Response.json({ jsonrpc: "2.0", id: rpc.id, result: { protocolVersion: "2025-03-26" } }, { headers: { "mcp-session-id": "sess-cached" } });
+        }
+        return Response.json({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: { runners: [{ runner_id: "ib-m_cached00000000000000000001", status: "online" }] }
+        });
+      }
+      throw new Error("Unexpected URL: " + method + " " + url);
+    }));
+
+    const res = await runLocalMcpHubControlTool(
+      "localmcp_hub_start",
+      { provider: "instabox" },
+      accountWithCache,
+      "",
+      "personal",
+      {}
+    );
+
+    expect(res).toMatchObject({
+      provider: "instabox",
+      machine_id: "m_cached00000000000000000001",
+      runner_id: "ib-m_cached00000000000000000001",
+      resumed: true,
+      cache_source: "rtdb_cache",
+      runner_online: true
+    });
+    expect(calls.some(c => c.url === "https://api.instabox.sh/v1/machines" && c.method === "POST")).toBe(false);
   });
 
   it("creates, polls readiness, and bootstraps an Upstash Box sandbox", async () => {
