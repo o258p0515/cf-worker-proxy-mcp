@@ -72,7 +72,9 @@ const hasAccounts = value => !!value && typeof value === "object" && !Array.isAr
   const github = typeof a.token === "string" && !!a.token.trim();
   const azure = typeof secrets.AZURE_DEVOPS_PAT === "string" && !!secrets.AZURE_DEVOPS_PAT.trim()
     && typeof secrets.AZURE_DEVOPS_ORG_URL === "string" && !!secrets.AZURE_DEVOPS_ORG_URL.trim();
-  return github || azure;
+  const instabox = typeof secrets.INSTABOX_API_KEY === "string" && !!secrets.INSTABOX_API_KEY.trim();
+  const upstash = typeof secrets.UPSTASH_BOX_API_KEY === "string" && !!secrets.UPSTASH_BOX_API_KEY.trim();
+  return github || azure || instabox || upstash;
 });
 async function fetchRtdbAccounts(url, accessToken) {
   const primary = new URL(url);
@@ -135,7 +137,9 @@ try {
     const secrets = account.localmcpgo_secrets && typeof account.localmcpgo_secrets === "object" ? account.localmcpgo_secrets : {};
     return (typeof account.token === "string" && !!account.token.trim())
       || (typeof secrets.AZURE_DEVOPS_PAT === "string" && !!secrets.AZURE_DEVOPS_PAT.trim()
-        && typeof secrets.AZURE_DEVOPS_ORG_URL === "string" && !!secrets.AZURE_DEVOPS_ORG_URL.trim());
+        && typeof secrets.AZURE_DEVOPS_ORG_URL === "string" && !!secrets.AZURE_DEVOPS_ORG_URL.trim())
+      || (typeof secrets.INSTABOX_API_KEY === "string" && !!secrets.INSTABOX_API_KEY.trim())
+      || (typeof secrets.UPSTASH_BOX_API_KEY === "string" && !!secrets.UPSTASH_BOX_API_KEY.trim());
   }).length;
   console.log("[PRE-FLIGHT CHECK PASSED] Cloudflare hostname and RTDB verified; mode=" + (mode || "legacy_auth_fallback") + "; enabled supported accounts=" + enabledAccounts + ". Secrets were not printed.");
   warnings.forEach(warning => console.warn("WARNING: " + warning));
