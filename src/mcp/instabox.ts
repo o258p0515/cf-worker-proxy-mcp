@@ -147,7 +147,7 @@ function buildBootstrapCommand(
   durationSeconds: number,
   optionalTs: Record<string, string>
 ): string {
-  const b64Config = btoa(
+  const b64Payload = btoa(
     JSON.stringify({
       hubUrls,
       mcpToken,
@@ -160,29 +160,29 @@ function buildBootstrapCommand(
       tsAuthkey: optionalTs.TS_AUTHKEY || ""
     })
   );
-  return `nohup sh -c '
-set -e
-CFG_JSON=$(printf "%s" "${b64Config}" | base64 -d)
-eval "$(python3 -c 'import sys,json,shlex; d=json.loads(sys.stdin.read()); print("\\n".join(f"{k}={shlex.quote(str(v))}" for k,v in d.items()))' <<< "$CFG_JSON" 2>/dev/null || node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); for(const [k,v] of Object.entries(d)) console.log(k+"="+JSON.stringify(String(v)))' <<< "$CFG_JSON")"
-mkdir -p /tmp/lmcp /tmp/mcp-root && cd /tmp/lmcp
-ARCH=$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")
-if [ ! -x ./mcp ]; then
-  curl -fsSL "https://github.com/${releaseRepo}/releases/latest/download/mcp-linux-\${ARCH}" -o mcp
-  chmod +x mcp
-fi
-export MCP_TOKEN="$mcpToken"
-export HUB_URLS="$hubUrls"
-[ -n "$tsTrustCreds" ] && export TS_TRUST_CREDS="$tsTrustCreds"
-[ -n "$tsTags" ] && export TS_TAGS="$tsTags"
-[ -n "$tsAuthkey" ] && export TS_AUTHKEY="$tsAuthkey"
-if command -v timeout >/dev/null 2>&1; then
-  exec timeout --signal=TERM --kill-after=15s "\${durationSeconds}s" ./mcp --root /tmp/mcp-root --tunnel hub --hub-urls "$hubUrls" --runner-id "$runnerId" --runner-tags "$runnerTags"
-else
-  exec ./mcp --root /tmp/mcp-root --tunnel hub --hub-urls "$hubUrls" --runner-id "$runnerId" --runner-tags "$runnerTags"
-fi
-' > /tmp/localmcp.log 2>&1 &
-sleep 1
-echo "STARTED_PID=$!"`;
+  const innerScript = [
+    "set -e",
+    `CFG_JSON=$(printf '%s' '${b64Payload}' | base64 -d)`,
+    `eval "$(printf '%s' "$CFG_JSON" | python3 -c 'import sys,json,shlex; d=json.loads(sys.stdin.read()); print("\\n".join(f"{k}={shlex.quote(str(v))}" for k,v in d.items()))' 2>/dev/null || printf '%s' "$CFG_JSON" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); for(const [k,v] of Object.entries(d)) console.log(k+"="+JSON.stringify(String(v)))')"`,
+    "mkdir -p /tmp/lmcp /tmp/mcp-root && cd /tmp/lmcp",
+    "ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')",
+    'if [ ! -x ./mcp ]; then',
+    '  curl -fsSL "https://github.com/$releaseRepo/releases/latest/download/mcp-linux-$ARCH" -o mcp',
+    "  chmod +x mcp",
+    "fi",
+    'export MCP_TOKEN="$mcpToken"',
+    'export HUB_URLS="$hubUrls"',
+    '[ -n "$tsTrustCreds" ] && export TS_TRUST_CREDS="$tsTrustCreds"',
+    '[ -n "$tsTags" ] && export TS_TAGS="$tsTags"',
+    '[ -n "$tsAuthkey" ] && export TS_AUTHKEY="$tsAuthkey"',
+    "if command -v timeout >/dev/null 2>&1; then",
+    '  exec timeout --signal=TERM --kill-after=15s "${durationSeconds}s" ./mcp --root /tmp/mcp-root --tunnel hub --hub-urls "$hubUrls" --runner-id "$runnerId" --runner-tags "$runnerTags"',
+    "else",
+    '  exec ./mcp --root /tmp/mcp-root --tunnel hub --hub-urls "$hubUrls" --runner-id "$runnerId" --runner-tags "$runnerTags"',
+    "fi"
+  ].join("\n");
+  const scriptB64 = btoa(innerScript);
+  return `printf '%s' '${scriptB64}' | base64 -d > /tmp/lmcp-start.sh && chmod +x /tmp/lmcp-start.sh && nohup sh /tmp/lmcp-start.sh > /tmp/localmcp.log 2>&1 & sleep 1 && echo "STARTED_PID=$!"`;
 }
 
 async function findHubRunner(account: RtdbAccount, env: any, authContext: AuthContext, runnerId: string) {
