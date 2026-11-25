@@ -143,7 +143,8 @@ function buildBootstrapCommand(
   runnerId: string,
   runnerTags: string,
   durationSeconds: number,
-  optionalTs: Record<string, string>
+  optionalTs: Record<string, string>,
+  skipTailscale = false
 ): string {
   const b64Payload = btoa(
     JSON.stringify({
@@ -153,9 +154,9 @@ function buildBootstrapCommand(
       runnerTags,
       durationSeconds,
       releaseRepo,
-      tsTrustCreds: optionalTs.TS_TRUST_CREDS || "",
-      tsTags: optionalTs.TS_TAGS || "",
-      tsAuthkey: optionalTs.TS_AUTHKEY || ""
+      tsTrustCreds: skipTailscale ? "" : optionalTs.TS_TRUST_CREDS || "",
+      tsTags: skipTailscale ? "" : optionalTs.TS_TAGS || "",
+      tsAuthkey: skipTailscale ? "" : optionalTs.TS_AUTHKEY || ""
     })
   );
   const innerScript = [
@@ -181,6 +182,22 @@ function buildBootstrapCommand(
   ].join("\n");
   const scriptB64 = btoa(innerScript);
   return `printf '%s' '${scriptB64}' | base64 -d > /tmp/lmcp-start.sh && chmod +x /tmp/lmcp-start.sh && nohup sh /tmp/lmcp-start.sh > /tmp/localmcp.log 2>&1 & sleep 1 && echo "STARTED_PID=$!"`;
+}
+
+async function waitHubRunnerOnline(
+  account: RtdbAccount,
+  env: any,
+  authContext: AuthContext,
+  runnerId: string,
+  maxWaitMs = 12000
+) {
+  const deadline = Date.now() + maxWaitMs;
+  let last = await findHubRunner(account, env, authContext, runnerId);
+  while (!last.online && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    last = await findHubRunner(account, env, authContext, runnerId);
+  }
+  return last;
 }
 
 async function findHubRunner(account: RtdbAccount, env: any, authContext: AuthContext, runnerId: string) {
@@ -303,6 +320,9 @@ export async function runUpstashBoxHubTool(
       if (v) optionalTs[k] = v;
     }
 
+    // Upstash Box small containers (~512MB RAM) OOM-kill userspace tailscaled;
+    // connect directly to Hub over HTTPS unless size is explicitly large.
+    const skipTailscale = size === "small";
     const cmd = buildBootstrapCommand(
       ctx.releaseRepo,
       hubUrlConfig.value,
@@ -310,13 +330,14 @@ export async function runUpstashBoxHubTool(
       runnerId,
       fullTags.join(","),
       requestedDuration,
-      optionalTs
+      optionalTs,
+      skipTailscale
     );
     const execRes = await request(ctx, `/v2/box/${encodeURIComponent(boxId)}/exec`, {
       method: "POST",
       body: JSON.stringify({ command: ["sh", "-c", cmd] })
     });
-    const hubState = await findHubRunner(account, env, authContext, runnerId);
+    const hubState = await waitHubRunnerOnline(account, env, authContext, runnerId);
     return {
       provider: "upstashbox",
       account: alias,
@@ -329,6 +350,7 @@ export async function runUpstashBoxHubTool(
       status: readyBox?.status || "running",
       runner_tags: fullTags,
       duration_seconds: requestedDuration,
+      tailscale_skipped: skipTailscale,
       bootstrap_output: String(execRes?.output || "").trim(),
       bootstrap_error: String(execRes?.error || "").trim(),
       runner_online: hubState.online,
