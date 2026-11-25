@@ -150,4 +150,31 @@ describe("official GitHub MCP parity", () => {
     expect(calls.some(call => call.url.includes("api.github.com"))).toBe(false);
   });
 
+  it("requires provider when both GitHub and Azure accounts exist in RTDB and routes provider='azure' without switching session account", async () => {
+    const env = makeEnv(); await clearAccountCaches(env);
+    const calls: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
+      const url = String(input); calls.push({ url, init });
+      if (url.includes("unit.firebaseio.com")) {
+        if (init.method === "PUT") return Response.json({});
+        return Response.json({
+          personal: { username: "o258p0515", token: "gh-token", enabled: true, readonly: false, orgs: ["o258p0515"] },
+          "azure-aerielaaeriel651971": { username: "aerielaaeriel651971", enabled: true, readonly: false, orgs: ["aerielaaeriel651971"], localmcpgo_secrets: { AZURE_DEVOPS_PAT: "unit-secret-azure-abcdef1234567890", AZURE_DEVOPS_ORG_URL: "https://dev.azure.com/aerielaaeriel651971", HUB_URLS: "https://hub.example.test", MCP_TOKEN: "unit-hub-secret-0123456789" } }
+        });
+      }
+      if (url.includes("/_apis/projects")) return Response.json({ value: [{ id: "p1", name: "Project" }] });
+      if (url.includes("/_apis/git/repositories")) return Response.json({ value: [{ id: "r1", name: "runner-config", defaultBranch: "refs/heads/main" }] });
+      if (url.includes("/_apis/pipelines")) return Response.json({ value: [] });
+      throw new Error("Unexpected URL " + url);
+    }));
+    const ctx = { method: "static_token", subject: "multi-provider-agent" } as any;
+    await handleJsonRpcMessage({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "select_github_account", arguments: { alias: "personal" } } } as any, env, ctx);
+    const missingProvider = await handleJsonRpcMessage({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "localmcp_hub_start", arguments: { os: "linux" } } } as any, env, ctx);
+    expect(missingProvider.error?.message).toMatch(/multiple providers.*provider='github'.*provider='azure'/i);
+    const azureCheck = await handleJsonRpcMessage({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "localmcp_hub_check_secrets", arguments: { provider: "azure", project: "Project" } } } as any, env, ctx);
+    const value = JSON.parse(azureCheck.result.content[0].text);
+    expect(value).toMatchObject({ provider: "azure", account: "azure-aerielaaeriel651971", selected_project: "Project" });
+    expect(calls.some(call => call.url.includes("api.github.com"))).toBe(false);
+  });
+
 });
