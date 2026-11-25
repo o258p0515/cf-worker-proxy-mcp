@@ -6,6 +6,7 @@ const WORKFLOW = "hub-runner.yml";
 const API_VERSION = "2022-11-28";
 
 const DEFAULT_HUB_URL = "https://hub.o258p0515.dpdns.org";
+const OPTIONAL_TS_SECRETS = ["TS_TRUST_CREDS", "TS_TAGS", "TS_AUTHKEY"] as const;
 
 function configured(account: RtdbAccount, fallbackToken = "", env: any = {}) {
   const secrets = account.localmcpgo_secrets || {};
@@ -109,7 +110,8 @@ export async function runLocalMcpHubControlTool(name: string, args: Record<strin
     const rtdbSecrets = targetAccount.localmcpgo_secrets || {};
     const missingInRtdb: string[] = [];
     const effectiveHubUrlSource = configuredSecrets.HUB_URLS_SOURCE;
-    return { provider: "github", repository: repo.owner + "/" + repo.repo, configured_names: Object.keys(rtdbSecrets).filter(key => ["HUB_URLS", "MCP_TOKEN"].includes(key)), effective_configured_names: ["HUB_URLS", "MCP_TOKEN"], hub_urls_source: effectiveHubUrlSource, token_source: configuredSecrets.MCP_TOKEN_SOURCE, github_names: existing, missing_in_rtdb: missingInRtdb, missing_on_github: required.filter(key => !existing.includes(key)), sync_required: required, values_returned: false };
+    const optionalConfigured = OPTIONAL_TS_SECRETS.filter(key => !!String(rtdbSecrets[key] || "").trim());
+    return { provider: "github", repository: repo.owner + "/" + repo.repo, configured_names: Object.keys(rtdbSecrets).filter(key => ["HUB_URLS", "MCP_TOKEN", ...OPTIONAL_TS_SECRETS].includes(key)), effective_configured_names: ["HUB_URLS", "MCP_TOKEN"], optional_configured_names: optionalConfigured, optional_missing_on_github: optionalConfigured.filter(key => !existing.includes(key)), hub_urls_source: effectiveHubUrlSource, token_source: configuredSecrets.MCP_TOKEN_SOURCE, github_names: existing, missing_in_rtdb: missingInRtdb, missing_on_github: required.filter(key => !existing.includes(key)), sync_required: required, values_returned: false };
   }
   if (name === "localmcp_hub_start") {
     const values = configured(targetAccount, fallbackToken, env);
@@ -125,6 +127,10 @@ export async function runLocalMcpHubControlTool(name: string, args: Record<strin
     const wf = await workflow(targetAccount.token, repo);
     await runGitHubSecretTool("set_github_secret", { ...repo, secret_name: "HUB_URLS", value: values.HUB_URLS }, targetAccount.token);
     await runGitHubSecretTool("set_github_secret", { ...repo, secret_name: "MCP_TOKEN", value: values.MCP_TOKEN }, targetAccount.token);
+    for (const key of OPTIONAL_TS_SECRETS) {
+      const val = String(targetAccount.localmcpgo_secrets?.[key] || "").trim();
+      if (val) await runGitHubSecretTool("set_github_secret", { ...repo, secret_name: key, value: val }, targetAccount.token);
+    }
     const repository = await github(targetAccount.token, path);
     await github(targetAccount.token, path + "/actions/workflows/" + WORKFLOW + "/dispatches", { method: "POST", body: JSON.stringify({ ref: String(repository.default_branch || "main"), inputs: { runner_name: runnerName, runner_tags: runnerTags, duration_seconds: String(duration), runner_os: runnerOs, account_alias: targetAlias } }) });
     const recent = await runs(targetAccount.token, repo, 10);
