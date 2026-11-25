@@ -62,7 +62,7 @@ describe("Azure DevOps Hub provider", () => {
       if (url.includes("pipelinepermissions/variablegroup")) return Response.json({ authorized: true });
       throw new Error("Unexpected Azure test request: " + url);
     }));
-    const accountWithoutHubUrl = { ...account, localmcpgo_secrets: { ...account.localmcpgo_secrets, HUB_URLS: "", TS_TRUST_CREDS: "tskey-client-id-secret", TS_TAGS: "tag:localmcpcoder" } };
+    const accountWithoutHubUrl = { ...account, localmcpgo_secrets: { ...account.localmcpgo_secrets, HUB_URLS: "", TS_TRUST_CREDS: "unit-ts-oauth-placeholder", TS_TAGS: "tag:localmcpcoder" } };
     const result = await runAzureHubTool("localmcp_hub_start", { project: "Project A", repository: "runner-config", os: "linux", runner_tags: "go,build", duration_seconds: 9000 }, accountWithoutHubUrl, "azure", env());
     expect(result).toMatchObject({ provider: "azure", run_id: 991, runner_id: "az-linux-991", os: "linux", duration_seconds: 3300, state: "running", variable_group: { id: 12, name: "LocalMCP-Hub-azure", secret_values_returned: false, authorized: true, pipeline_id: 77 } });
     const yamlPush = calls.find(c => c.url.includes("/_apis/git/repositories/repo-id/pushes"));
@@ -81,7 +81,7 @@ describe("Azure DevOps Hub provider", () => {
     expect(groupVariables.MCP_TOKEN).toMatchObject({ value: TOKEN, isSecret: true });
     expect(groupVariables.HUB_URLS).toMatchObject({ value: "https://hub.o258p0515.dpdns.org", isSecret: true });
     expect(groupVariables.MCP_SHUTDOWN_TOKEN).toMatchObject({ isSecret: true });
-    expect(groupVariables.TS_TRUST_CREDS).toMatchObject({ value: "tskey-client-id-secret", isSecret: true });
+    expect(groupVariables.TS_TRUST_CREDS).toMatchObject({ value: "unit-ts-oauth-placeholder", isSecret: true });
     expect(groupVariables.TS_TAGS).toMatchObject({ value: "tag:localmcpcoder", isSecret: false });
     expect(groupVariables.MCP_SHUTDOWN_TOKEN.value).not.toBe(TOKEN);
     expect(JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content).toContain("MCP_SHUTDOWN_TOKEN: $(MCP_SHUTDOWN_TOKEN)");

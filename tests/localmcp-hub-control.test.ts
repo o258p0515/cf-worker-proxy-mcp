@@ -131,7 +131,7 @@ describe("separate LocalMCP Hub lifecycle controls", () => {
       throw new Error("Unexpected request " + url);
     }));
     secretTool.mockImplementation(async (name: string) => name === "list_github_secrets" ? { secrets: [] } : { updated: true });
-    const withTs = { ...account, localmcpgo_secrets: { ...account.localmcpgo_secrets, TS_TRUST_CREDS: "tskey-client-id-secret", TS_TAGS: "tag:localmcpcoder" } };
+    const withTs = { ...account, localmcpgo_secrets: { ...account.localmcpgo_secrets, TS_TRUST_CREDS: "unit-ts-oauth-placeholder", TS_TAGS: "tag:localmcpcoder" } };
     await runLocalMcpHubControlTool("localmcp_hub_start", { runner_name: "ts-gh" }, withTs, "", "personal");
     const writes = secretTool.mock.calls.filter(call => call[0] === "set_github_secret");
     expect(writes.map(call => call[1].secret_name)).toEqual(["HUB_URLS", "MCP_TOKEN", "TS_TRUST_CREDS", "TS_TAGS"]);
