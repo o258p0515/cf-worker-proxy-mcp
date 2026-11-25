@@ -277,34 +277,59 @@ export async function runUpstashBoxHubTool(
     if (!hubUrlConfig.value || token.length < 16) {
       throw new Error("Upstash Box runner requires an effective Hub URL and MCP_TOKEN in RTDB or Proxy runtime.");
     }
-    const runnerName = typeof args.runner_name === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(args.runner_name.trim())
-      ? args.runner_name.trim()
-      : `upstash-${Date.now()}`;
-    const runnerTags = typeof args.runner_tags === "string" && /^[A-Za-z0-9_:.,-]{1,300}$/.test(args.runner_tags.trim())
-      ? args.runner_tags.trim()
-      : "upstashbox,linux,go";
-    const runtime = typeof args.runtime === "string" && args.runtime.trim()
-      ? args.runtime.trim()
-      : typeof args.template === "string" && args.template.trim()
-        ? args.template.trim()
-        : ctx.defaultRuntime;
-    const size = typeof args.size === "string" && ["small", "medium", "large"].includes(args.size.trim())
-      ? args.size.trim()
-      : ctx.defaultSize;
     const requestedDuration = Number(args.duration_seconds ?? 3600);
     if (!Number.isInteger(requestedDuration) || requestedDuration < 60 || requestedDuration > 86400) {
       throw new Error("duration_seconds must be an integer between 60 and 86400.");
     }
 
-    const created = await request(ctx, "/v2/box", {
-      method: "POST",
-      body: JSON.stringify({ name: runnerName, runtime, size })
-    });
-    const boxId = String(created?.id || "");
-    if (!boxId) {
-      throw new Error("Upstash Box creation succeeded without returning a box id.");
+    const existingRef = [args.box_id, args.machine_id, args.id, args.runner_id].find(
+      v => typeof v === "string" && v.trim()
+    ) as string | undefined;
+
+    let boxId = "";
+    let readyBox: any = {};
+    let resumed = false;
+
+    if (existingRef) {
+      boxId = await resolveBoxId(ctx, args);
+      const current = await request(ctx, `/v2/box/${encodeURIComponent(boxId)}`);
+      if (String(current?.status || "").toLowerCase() === "paused") {
+        await request(ctx, `/v2/box/${encodeURIComponent(boxId)}/resume`, { method: "POST" }).catch(() => null);
+      }
+      readyBox = await waitBoxReady(ctx, boxId);
+      resumed = true;
+    } else {
+      const initialName = typeof args.runner_name === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(args.runner_name.trim())
+        ? args.runner_name.trim()
+        : `upstash-${Date.now()}`;
+      const runtime = typeof args.runtime === "string" && args.runtime.trim()
+        ? args.runtime.trim()
+        : typeof args.template === "string" && args.template.trim()
+          ? args.template.trim()
+          : ctx.defaultRuntime;
+      const size = typeof args.size === "string" && ["small", "medium", "large"].includes(args.size.trim())
+        ? args.size.trim()
+        : ctx.defaultSize;
+      const created = await request(ctx, "/v2/box", {
+        method: "POST",
+        body: JSON.stringify({ name: initialName, runtime, size })
+      });
+      boxId = String(created?.id || "");
+      if (!boxId) {
+        throw new Error("Upstash Box creation succeeded without returning a box id.");
+      }
+      readyBox = await waitBoxReady(ctx, boxId);
     }
-    const readyBox = await waitBoxReady(ctx, boxId);
+
+    const runnerName = typeof args.runner_name === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(args.runner_name.trim())
+      ? args.runner_name.trim()
+      : String(readyBox?.name || `upstash-${boxId}`);
+    const runnerTags = typeof args.runner_tags === "string" && /^[A-Za-z0-9_:.,-]{1,300}$/.test(args.runner_tags.trim())
+      ? args.runner_tags.trim()
+      : "upstashbox,linux,go";
+    const runtime = String(readyBox?.runtime || (typeof args.runtime === "string" && args.runtime.trim() ? args.runtime.trim() : ctx.defaultRuntime));
+    const size = String(readyBox?.size || (typeof args.size === "string" && ["small", "medium", "large"].includes(args.size.trim()) ? args.size.trim() : ctx.defaultSize));
+
     const runnerId = `ub-${boxId}`;
     const fullTags = [
       "provider:upstashbox",
@@ -344,10 +369,11 @@ export async function runUpstashBoxHubTool(
       box_id: boxId,
       runner_id: runnerId,
       runner_name: runnerName,
-      runtime: readyBox?.runtime || runtime,
-      size: readyBox?.size || size,
+      runtime,
+      size,
       os: "linux",
       status: readyBox?.status || "running",
+      resumed,
       runner_tags: fullTags,
       duration_seconds: requestedDuration,
       tailscale_skipped: skipTailscale,
@@ -427,8 +453,8 @@ export async function runUpstashBoxHubTool(
   }
 
   if (name === "localmcp_hub_stop") {
-    const pauseOnly = args.pause === true || args.delete === false;
-    if (pauseOnly) {
+    const deleteMode = args.delete === true;
+    if (!deleteMode) {
       await request(ctx, `/v2/box/${encodeURIComponent(boxId)}/pause`, { method: "POST" });
       return {
         provider: "upstashbox",
