@@ -26,7 +26,9 @@ function hasEnabledAccounts(raw: unknown): boolean {
       const secrets = account.localmcpgo_secrets && typeof account.localmcpgo_secrets === "object" ? account.localmcpgo_secrets : {};
       return (typeof account.token === "string" && !!account.token.trim())
         || (typeof secrets.AZURE_DEVOPS_PAT === "string" && !!secrets.AZURE_DEVOPS_PAT.trim()
-          && typeof secrets.AZURE_DEVOPS_ORG_URL === "string" && !!secrets.AZURE_DEVOPS_ORG_URL.trim());
+          && typeof secrets.AZURE_DEVOPS_ORG_URL === "string" && !!secrets.AZURE_DEVOPS_ORG_URL.trim())
+        || (typeof secrets.INSTABOX_API_KEY === "string" && !!secrets.INSTABOX_API_KEY.trim())
+        || (typeof secrets.UPSTASH_BOX_API_KEY === "string" && !!secrets.UPSTASH_BOX_API_KEY.trim());
     });
 }
 
@@ -40,7 +42,9 @@ function normalize(raw: unknown): Record<string, RtdbAccount> {
       : {};
     const githubToken = typeof account?.token === "string" ? account.token.trim() : "";
     const azureConfigured = !!rawSecrets.AZURE_DEVOPS_PAT?.trim() && !!rawSecrets.AZURE_DEVOPS_ORG_URL?.trim();
-    if (!account || (!githubToken && !azureConfigured)) continue;
+    const instaboxConfigured = !!rawSecrets.INSTABOX_API_KEY?.trim();
+    const upstashConfigured = !!rawSecrets.UPSTASH_BOX_API_KEY?.trim();
+    if (!account || (!githubToken && !azureConfigured && !instaboxConfigured && !upstashConfigured)) continue;
     out[alias] = {
       username: String(account.username || ""),
       token: githubToken,
@@ -121,7 +125,9 @@ export async function listPublicAccounts(env: Env) {
       orgs: account.orgs, readonly: account.readonly,
       providers: [
         ...(account.token ? ["github"] : []),
-        ...(account.localmcpgo_secrets?.AZURE_DEVOPS_PAT && account.localmcpgo_secrets?.AZURE_DEVOPS_ORG_URL ? ["azure"] : [])
+        ...(account.localmcpgo_secrets?.AZURE_DEVOPS_PAT && account.localmcpgo_secrets?.AZURE_DEVOPS_ORG_URL ? ["azure"] : []),
+        ...(account.localmcpgo_secrets?.INSTABOX_API_KEY ? ["instabox"] : []),
+        ...(account.localmcpgo_secrets?.UPSTASH_BOX_API_KEY ? ["upstashbox"] : [])
       ]
     }));
 }
@@ -135,7 +141,9 @@ export async function resolveAccount(env: Env, alias: string) {
       orgs: account.orgs, readonly: account.readonly,
       providers: [
         ...(account.token ? ["github"] : []),
-        ...(account.localmcpgo_secrets?.AZURE_DEVOPS_PAT && account.localmcpgo_secrets?.AZURE_DEVOPS_ORG_URL ? ["azure"] : [])
+        ...(account.localmcpgo_secrets?.AZURE_DEVOPS_PAT && account.localmcpgo_secrets?.AZURE_DEVOPS_ORG_URL ? ["azure"] : []),
+        ...(account.localmcpgo_secrets?.INSTABOX_API_KEY ? ["instabox"] : []),
+        ...(account.localmcpgo_secrets?.UPSTASH_BOX_API_KEY ? ["upstashbox"] : [])
       ]
     }));
   const account = accounts[alias];

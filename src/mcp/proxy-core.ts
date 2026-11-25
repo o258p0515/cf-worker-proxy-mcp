@@ -109,7 +109,12 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
         const resolved = await resolveAccount(env, alias);
         if (!resolved.ok) throw new Error(`Unknown or disabled GitHub account '${alias}'. Available accounts: ${resolved.availableAccounts.map(a => `${a.alias} (${a.username}${a.readonly ? ", read-only" : ""})`).join(", ") || "none"}`);
         await saveSelectedAlias(env, ctx, alias);
-        const providers = [...(resolved.account.token ? ["github"] : []), ...(resolved.account.localmcpgo_secrets?.AZURE_DEVOPS_PAT && resolved.account.localmcpgo_secrets?.AZURE_DEVOPS_ORG_URL ? ["azure"] : [])];
+        const providers = [
+          ...(resolved.account.token ? ["github"] : []),
+          ...(resolved.account.localmcpgo_secrets?.AZURE_DEVOPS_PAT && resolved.account.localmcpgo_secrets?.AZURE_DEVOPS_ORG_URL ? ["azure"] : []),
+          ...(resolved.account.localmcpgo_secrets?.INSTABOX_API_KEY ? ["instabox"] : []),
+          ...(resolved.account.localmcpgo_secrets?.UPSTASH_BOX_API_KEY ? ["upstashbox"] : [])
+        ];
         return hasId ? result(msg.id, textResult({ selected: alias, username: resolved.account.username, readonly: resolved.account.readonly, providers, message: `Account '${alias}' is now active for this MCP connection.` })) : null;
       }
       const requested = ctx.pinnedAccount || (typeof args.account === "string" ? args.account : undefined);

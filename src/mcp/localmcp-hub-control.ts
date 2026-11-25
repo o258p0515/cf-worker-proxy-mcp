@@ -1,6 +1,8 @@
 import type { AuthContext, RtdbAccount } from "../types";
 import { runGitHubSecretTool } from "./github-secrets";
 import { runAzureHubTool } from "./azure-devops";
+import { runInstaBoxHubTool } from "./instabox";
+import { runUpstashBoxHubTool } from "./upstash-box";
 
 const WORKFLOW = "hub-runner.yml";
 const API_VERSION = "2022-11-28";
@@ -54,11 +56,16 @@ async function runs(token: string, repo: { owner: string; repo: string }, count 
 function summary(run: any) {
   return { id: run.id, status: run.status, conclusion: run.conclusion, created_at: run.created_at, updated_at: run.updated_at, html_url: run.html_url, head_branch: run.head_branch, run_number: run.run_number };
 }
-function accountProviders(account: RtdbAccount): Array<"github" | "azure"> {
+type HubProvider = "github" | "azure" | "instabox" | "upstashbox";
+const VALID_PROVIDERS: readonly HubProvider[] = ["github", "azure", "instabox", "upstashbox"];
+
+function accountProviders(account: RtdbAccount): HubProvider[] {
   const values = account.localmcpgo_secrets || {};
   return [
     ...(account.token ? ["github" as const] : []),
-    ...(values.AZURE_DEVOPS_PAT && values.AZURE_DEVOPS_ORG_URL ? ["azure" as const] : [])
+    ...(values.AZURE_DEVOPS_PAT && values.AZURE_DEVOPS_ORG_URL ? ["azure" as const] : []),
+    ...(values.INSTABOX_API_KEY ? ["instabox" as const] : []),
+    ...(values.UPSTASH_BOX_API_KEY ? ["upstashbox" as const] : [])
   ];
 }
 function resolveProviderAndAccount(
@@ -66,19 +73,23 @@ function resolveProviderAndAccount(
   alias: string,
   requested: unknown,
   allAccounts?: Record<string, RtdbAccount>
-): { provider: "github" | "azure"; targetAccount: RtdbAccount; targetAlias: string } {
+): { provider: HubProvider; targetAccount: RtdbAccount; targetAlias: string } {
   const provider = typeof requested === "string" ? requested.trim().toLowerCase() : "";
-  if (provider && provider !== "github" && provider !== "azure") throw new Error("provider must be either 'github' or 'azure'.");
+  if (provider && !VALID_PROVIDERS.includes(provider as HubProvider)) {
+    throw new Error("provider must be one of: github, azure, instabox, upstashbox.");
+  }
   const enabledEntries = Object.entries(allAccounts || { [alias || "selected"]: account })
     .filter(([, item]) => item && item.enabled !== false);
   const availableProviders = Array.from(new Set(enabledEntries.flatMap(([, item]) => accountProviders(item))));
-  if (!availableProviders.length) throw new Error("No enabled account has supported GitHub or Azure DevOps credentials.");
-  let chosenProvider: "github" | "azure";
+  if (!availableProviders.length) throw new Error("No enabled account has supported GitHub, Azure DevOps, InstaBox, or Upstash Box credentials.");
+  let chosenProvider: HubProvider;
   if (availableProviders.length === 1) {
     chosenProvider = availableProviders[0]!;
   } else {
-    if (!provider) throw new Error("Multiple providers are configured (" + availableProviders.join(", ") + "). Pass provider='github' or provider='azure'; no provider is selected automatically.");
-    chosenProvider = provider as "github" | "azure";
+    if (!provider) {
+      throw new Error("Multiple providers are configured (" + availableProviders.join(", ") + "). Pass provider=" + availableProviders.map(p => `provider='${p}'`).join(" or ") + "; no provider is selected automatically.");
+    }
+    chosenProvider = provider as HubProvider;
   }
   if (accountProviders(account).includes(chosenProvider)) {
     return { provider: chosenProvider, targetAccount: account, targetAlias: alias };
@@ -99,6 +110,8 @@ export async function runLocalMcpHubControlTool(name: string, args: Record<strin
     throw new Error("Account '" + targetAlias + "' is read-only; this write operation is blocked.");
   }
   if (provider === "azure") return { ...(await runAzureHubTool(name, args, targetAccount, targetAlias, env, authContext)), provider: "azure" };
+  if (provider === "instabox") return { ...(await runInstaBoxHubTool(name, args, targetAccount, targetAlias, env, authContext)), provider: "instabox" };
+  if (provider === "upstashbox") return { ...(await runUpstashBoxHubTool(name, args, targetAccount, targetAlias, env, authContext)), provider: "upstashbox" };
   if (!targetAccount.token) throw new Error("The selected account has no GitHub token; choose provider='azure' for Azure DevOps operations.");
   const repo = target(args, targetAccount);
   const path = "/repos/" + repo.owner + "/" + repo.repo;
