@@ -1,25 +1,21 @@
-import type { AuthContext, CachedSandboxRunner, Env, RtdbAccount } from "../types";
-import { getGoogleAccessToken } from "./google-jwt";
+import type { CachedSandboxRunner, Env, RtdbAccount } from "../types";
+import { decryptAesGcm, encryptAesGcm } from "../utils/crypto";
+import { googleAccessToken, resolveServiceAccountFromEnv } from "./google-jwt";
 
-const CACHE_KEY = "rtdb:accounts:v1";
-const TTL_SECONDS = 300;
-let memory: { expiresAt: number; accounts: Record<string, RtdbAccount> } | null = null;
+let memory: { accounts: Record<string, RtdbAccount>; expires: number } | null = null;
 let activeRtdbUrl = "";
 
-export type RtdbConfig = { url: string; mode: "firebase_service_account" | "legacy_auth_fallback" };
-
-function normalizedOrgs(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map(item => item.trim());
-}
-
-function normalizedSecrets(raw: unknown): Record<string, string> {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof value === "string" && value.trim()) out[key.trim()] = value.trim();
+function normalizeDbUrl(raw: string, removeAuth = false): string {
+  const url = new URL(raw);
+  if (url.protocol !== "https:" || !(/\.(firebaseio\.com|firebasedatabase\.app)$/.test(url.hostname))) {
+    throw new Error("RTDB URL must use HTTPS and a Firebase database hostname");
   }
-  return out;
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  if (!url.pathname || url.pathname === "/") url.pathname = "/github_accounts.json";
+  else if (url.pathname === "/github_accounts") url.pathname += ".json";
+  else if (!url.pathname.endsWith(".json")) throw new Error("RTDB URL path must point to github_accounts.json");
+  if (removeAuth) url.searchParams.delete("auth");
+  return url.toString();
 }
 
 function normalizedCachedRunner(raw: unknown): CachedSandboxRunner | undefined {
@@ -52,9 +48,10 @@ function normalizedCachedRunners(raw: unknown): RtdbAccount["localmcpgo_runners"
 }
 
 function hasEnabledAccounts(raw: unknown): boolean {
-  return !!raw && typeof raw === "object" && !Array.isArray(raw) && Object.values(raw as Record<string, any>)
-    .some(account => {
-      if (!account || typeof account !== "object" || account.enabled === false) return false;
+  return !!raw && typeof raw === "object" && !Array.isArray(raw)
+    && Object.values(raw).some(value => {
+      const account = value as Partial<RtdbAccount> | null;
+      if (!account || account.enabled === false) return false;
       const secrets = account.localmcpgo_secrets && typeof account.localmcpgo_secrets === "object" ? account.localmcpgo_secrets : {};
       return (typeof account.token === "string" && !!account.token.trim())
         || (typeof secrets.AZURE_DEVOPS_PAT === "string" && !!secrets.AZURE_DEVOPS_PAT.trim()
@@ -65,12 +62,12 @@ function hasEnabledAccounts(raw: unknown): boolean {
 }
 
 function normalize(raw: unknown): Record<string, RtdbAccount> {
-  if (!raw || typeof raw !== "object") return {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("RTDB github_accounts node must be a JSON object");
   const out: Record<string, RtdbAccount> = {};
-  for (const [alias, value] of Object.entries(raw as Record<string, any>)) {
-    const account = value && typeof value === "object" && value.accounts && typeof value.accounts === "object" ? value.accounts : value;
-    const rawSecrets = account?.localmcpgo_secrets && typeof account.localmcpgo_secrets === "object"
-      ? (account.localmcpgo_secrets as Record<string, string>)
+  for (const [alias, value] of Object.entries(raw)) {
+    const account = value as Partial<RtdbAccount>;
+    const rawSecrets = account?.localmcpgo_secrets && typeof account.localmcpgo_secrets === "object" && !Array.isArray(account.localmcpgo_secrets)
+      ? Object.fromEntries(Object.entries(account.localmcpgo_secrets).filter(([key, value]) => /^[A-Z_][A-Z0-9_]{0,99}$/.test(key) && typeof value === "string" && value.length > 0)) as Record<string, string>
       : {};
     const githubToken = typeof account?.token === "string" ? account.token.trim() : "";
     const azureConfigured = !!rawSecrets.AZURE_DEVOPS_PAT?.trim() && !!rawSecrets.AZURE_DEVOPS_ORG_URL?.trim();
@@ -81,93 +78,78 @@ function normalize(raw: unknown): Record<string, RtdbAccount> {
       username: String(account.username || ""),
       token: githubToken,
       description: String(account.description || ""),
-      orgs: normalizedOrgs(account.orgs),
+      orgs: Array.isArray(account.orgs) ? account.orgs.map(String) : [],
+      git_repositories: Array.isArray(account.git_repositories) ? account.git_repositories.filter((value): value is string => typeof value === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value.trim())).map(value => value.trim()) : [],
       enabled: account.enabled !== false,
-      readonly: Boolean(account.readonly),
-      localmcpgo_secrets: normalizedSecrets(account.localmcpgo_secrets),
-      localmcpgo_runners: normalizedCachedRunners(account.localmcpgo_runners),
-      allowed_repositories: normalizedOrgs(account.allowed_repositories),
-      git_credentials: account.git_credentials && typeof account.git_credentials === "object" && !Array.isArray(account.git_credentials)
-        ? {
-            enabled: account.git_credentials.enabled !== false,
-            allowed_repositories: normalizedOrgs(account.git_credentials.allowed_repositories)
-          }
-        : undefined
+      readonly: account.readonly === true,
+      is_catalog_source: account.is_catalog_source === true,
+      localmcpgo_secrets: rawSecrets,
+      localmcpgo_cache: account.localmcpgo_cache && typeof account.localmcpgo_cache === "object" && !Array.isArray(account.localmcpgo_cache) ? account.localmcpgo_cache as Record<string, unknown> : {},
+      localmcpgo_runners: normalizedCachedRunners(account.localmcpgo_runners)
     };
   }
   return out;
 }
 
-export function resolveRtdbConfig(env: Env): RtdbConfig | null {
-  const url = env.RTDB_AUTH_URL?.trim();
-  if (!url) return null;
-  if (env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim()) return { url, mode: "firebase_service_account" };
-  return new URL(url).searchParams.get("auth") ? { url, mode: "legacy_auth_fallback" } : null;
-}
-
-export async function authorizedRtdbUrl(env: Env, config: RtdbConfig, baseUrl = config.url) {
-  const url = new URL(baseUrl);
-  if (config.mode === "firebase_service_account") {
-    url.searchParams.delete("auth");
-    url.searchParams.set("access_token", await getGoogleAccessToken(env.FIREBASE_SERVICE_ACCOUNT_JSON!));
-  }
-  return url;
-}
-
-function accountsRootUrl(configUrl: string) {
-  const url = new URL(configUrl);
-  url.pathname = url.pathname.replace(/\/github_accounts\/?\.json$/, ".json");
-  return url.toString();
-}
-
-export async function fetchRtdbAccounts(env: Env) {
-  const config = resolveRtdbConfig(env);
-  if (!config) return null;
-  const primary = await authorizedRtdbUrl(env, config);
-  const res = await fetch(primary.toString());
-  if (!res.ok) throw new Error("RTDB fetch failed: " + res.status);
-  const raw = await res.json();
-  if (hasEnabledAccounts(raw)) {
-    activeRtdbUrl = config.url;
-    return normalize(raw);
-  }
-  const fallbackBase = accountsRootUrl(config.url);
-  if (fallbackBase !== config.url) {
-    const fallbackRes = await fetch((await authorizedRtdbUrl(env, config, fallbackBase)).toString());
-    if (fallbackRes.ok) {
-      const fallbackRaw = await fallbackRes.json();
-      if (hasEnabledAccounts(fallbackRaw)) {
-        activeRtdbUrl = fallbackBase;
-        return normalize(fallbackRaw);
+export async function getAccounts(env: Env, options: { forceRefresh?: boolean } = {}): Promise<Record<string, RtdbAccount>> {
+  const ttl = Math.max(30, Number(env.RTDB_CACHE_TTL_SECONDS) || 3600);
+  if (!options.forceRefresh && memory && memory.expires > Date.now()) return memory.accounts;
+  if (!options.forceRefresh) {
+    const cached = await env.CACHE_KV.get("rtdb:accounts:v1");
+    if (cached) {
+      try {
+        const accounts = JSON.parse(await decryptAesGcm(cached, env.MCP_TOKEN));
+        memory = { accounts, expires: Date.now() + ttl * 1000 };
+        return accounts;
+      } catch {
+        // A changed MCP_TOKEN makes old encrypted cache entries unreadable; fetch fresh data.
       }
     }
   }
-  activeRtdbUrl = config.url;
-  return normalize(raw);
-}
 
-export async function getAccounts(env: Env): Promise<Record<string, RtdbAccount>> {
-  if (memory && memory.expiresAt > Date.now()) return memory.accounts;
-  const cached = await env.CACHE_KV.get(CACHE_KEY);
-  if (cached) {
-    const parsed = normalize(JSON.parse(cached));
-    if (Object.values(parsed).some(a => a.enabled)) {
-      memory = { expiresAt: Date.now() + 60_000, accounts: parsed };
-      return parsed;
+  const serviceAccount = resolveServiceAccountFromEnv(env);
+  const headers = new Headers();
+  let url: string;
+  if (serviceAccount) {
+    const rawUrl = env.RTDB_URL?.trim() || env.RTDB_AUTH_URL?.trim() || "";
+    if (!rawUrl) throw new Error("RTDB_URL or RTDB_AUTH_URL is required with a Firebase Service Account");
+    url = normalizeDbUrl(rawUrl, true);
+    headers.set("Authorization", "Bearer " + await googleAccessToken(env));
+  } else {
+    const rawUrl = env.RTDB_AUTH_URL?.trim() || "";
+    if (!rawUrl) throw new Error("RTDB is not configured: provide Firebase Service Account + RTDB_URL or RTDB_AUTH_URL");
+    url = normalizeDbUrl(rawUrl);
+    if (!new URL(url).searchParams.get("auth")) throw new Error("RTDB_AUTH_URL must include ?auth= when Service Account credentials are not configured");
+  }
+
+  let response = await fetch(url, { headers });
+  if (!response.ok) throw new Error("Firebase RTDB request failed (HTTP " + response.status + ")");
+  let raw: unknown = await response.json();
+  if (!hasEnabledAccounts(raw) && new URL(url).pathname === "/github_accounts.json") {
+    const envUrl = new URL(url);
+    envUrl.pathname = "/env/github_accounts.json";
+    const envResponse = await fetch(envUrl, { headers });
+    if (envResponse.ok) {
+      const envRaw: unknown = await envResponse.json();
+      if (hasEnabledAccounts(envRaw)) {
+        raw = envRaw;
+        url = envUrl.toString();
+      }
     }
   }
-  let accounts = await fetchRtdbAccounts(env);
-  if (!accounts && env.GITHUB_ACCOUNTS) accounts = normalize(JSON.parse(env.GITHUB_ACCOUNTS));
-  accounts = accounts || {};
-  memory = { expiresAt: Date.now() + 60_000, accounts };
-  if (Object.values(accounts).some(a => a.enabled)) await env.CACHE_KV.put(CACHE_KEY, JSON.stringify(accounts), { expirationTtl: TTL_SECONDS });
+  activeRtdbUrl = url;
+  const accounts = normalize(raw);
+  if (!Object.values(accounts).some(account => account.enabled)) throw new Error("Firebase RTDB contains no enabled GitHub or Azure DevOps account at /github_accounts or /env/github_accounts");
+
+  memory = { accounts, expires: Date.now() + ttl * 1000 };
+  await env.CACHE_KV.put("rtdb:accounts:v1", await encryptAesGcm(JSON.stringify(accounts), env.MCP_TOKEN), { expirationTtl: ttl });
   return accounts;
 }
 
 export async function listPublicAccounts(env: Env) {
   const accounts = await getAccounts(env);
   return Object.entries(accounts)
-    .filter(([, a]) => a.enabled)
+    .filter(([, account]) => account.enabled)
     .map(([alias, account]) => ({
       alias, username: account.username, description: account.description,
       orgs: account.orgs, readonly: account.readonly,
@@ -183,9 +165,9 @@ export async function listPublicAccounts(env: Env) {
 export async function resolveAccount(env: Env, alias: string) {
   const accounts = await getAccounts(env);
   const availableAccounts = Object.entries(accounts)
-    .filter(([, a]) => a.enabled)
-    .map(([itemAlias, account]) => ({
-      alias: itemAlias, username: account.username, description: account.description,
+    .filter(([, account]) => account.enabled)
+    .map(([key, account]) => ({
+      alias: key, username: account.username, description: account.description,
       orgs: account.orgs, readonly: account.readonly,
       providers: [
         ...(account.token ? ["github"] : []),
@@ -195,40 +177,62 @@ export async function resolveAccount(env: Env, alias: string) {
       ]
     }));
   const account = accounts[alias];
-  if (!account || !account.enabled) return { ok: false as const, availableAccounts };
-  return { ok: true as const, account, availableAccounts };
+  return account?.enabled
+    ? { ok: true as const, account }
+    : { ok: false as const, reason: "invalid_or_missing", availableAccounts };
 }
 
-export async function getSelectedAlias(env: Env, ctx: AuthContext): Promise<string | null> {
-  if (ctx.pinnedAccount) return ctx.pinnedAccount;
-  const key = "session:account:" + (ctx.sessionId || ctx.subject);
-  return env.CACHE_KV.get(key);
-}
-
-export async function saveSelectedAlias(env: Env, ctx: AuthContext, alias: string) {
-  const key = "session:account:" + (ctx.sessionId || ctx.subject);
-  await env.CACHE_KV.put(key, alias, { expirationTtl: 86400 });
-}
-
-export function accountWriteUrl(configUrl: string, alias: string, childPath = "localmcpgo_secrets") {
-  const url = new URL(configUrl);
-  url.pathname = url.pathname.replace(/\/?\.json$/, `/${encodeURIComponent(alias)}/${childPath}.json`);
-  return url.toString();
-}
-
-export async function writeAccountSecrets(env: Env, alias: string, secrets: Record<string, string>) {
-  const config = resolveRtdbConfig(env);
-  if (!config) throw new Error("RTDB is not configured on this Worker.");
-  if (!activeRtdbUrl) await getAccounts(env);
-  const baseUrl = activeRtdbUrl || config.url;
-  const target = await authorizedRtdbUrl(env, config, accountWriteUrl(baseUrl, alias, "localmcpgo_secrets"));
-  const res = await fetch(target.toString(), {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(secrets)
-  });
-  if (!res.ok) throw new Error("RTDB secret write failed: " + res.status);
+export async function setGitRepositories(env: Env, alias: string, repositories: string[]) {
+  const accounts = await getAccounts(env, { forceRefresh: true });
+  if (!accounts[alias]?.enabled) throw new Error("Cannot configure Git repository allowlist for an unknown or disabled account.");
+  if (!activeRtdbUrl) throw new Error("RTDB account path could not be resolved");
+  const url = new URL(activeRtdbUrl);
+  url.pathname = url.pathname.slice(0, -5) + "/" + encodeURIComponent(alias) + "/git_repositories.json";
+  const serviceAccount = resolveServiceAccountFromEnv(env);
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (serviceAccount) {
+    url.searchParams.delete("auth");
+    headers.set("Authorization", "Bearer " + await googleAccessToken(env));
+  }
+  const response = await fetch(url, { method: "PUT", headers, body: JSON.stringify(repositories) });
+  if (!response.ok) throw new Error("Firebase RTDB Git repository allowlist write failed (HTTP " + response.status + ")");
   await clearAccountCaches(env);
+  return repositories;
+}
+
+export async function setLocalMcpSecrets(env: Env, alias: string, secrets: Record<string, string>, replace = false) {
+  // Force a fresh read so the selected RTDB node (including /env fallback) is known.
+  await getAccounts(env, { forceRefresh: true });
+  if (!activeRtdbUrl) throw new Error("RTDB account path could not be resolved");
+  const url = new URL(activeRtdbUrl);
+  url.pathname = url.pathname.replace(/\.json$/, "") + "/" + encodeURIComponent(alias) + "/localmcpgo_secrets.json";
+  const serviceAccount = resolveServiceAccountFromEnv(env);
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (serviceAccount) {
+    url.searchParams.delete("auth");
+    headers.set("Authorization", "Bearer " + await googleAccessToken(env));
+  }
+  const response = await fetch(url, { method: replace ? "PUT" : "PATCH", headers, body: JSON.stringify(secrets) });
+  if (!response.ok) throw new Error("Firebase RTDB secret configuration write failed (HTTP " + response.status + ")");
+  await clearAccountCaches(env);
+  return Object.keys(secrets);
+}
+
+export async function setLocalMcpCache(env: Env, alias: string, cache: Record<string, unknown>) {
+  await getAccounts(env, { forceRefresh: true });
+  if (!activeRtdbUrl) throw new Error("RTDB account path could not be resolved");
+  const url = new URL(activeRtdbUrl);
+  url.pathname = url.pathname.replace(/\.json$/, "") + "/" + encodeURIComponent(alias) + "/localmcpgo_cache.json";
+  const serviceAccount = resolveServiceAccountFromEnv(env);
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (serviceAccount) {
+    url.searchParams.delete("auth");
+    headers.set("Authorization", "Bearer " + await googleAccessToken(env));
+  }
+  const response = await fetch(url, { method: "PUT", headers, body: JSON.stringify(cache) });
+  if (!response.ok) throw new Error("Firebase RTDB LocalMCP cache write failed (HTTP " + response.status + ")");
+  await clearAccountCaches(env);
+  return true;
 }
 
 export async function writeCachedSandboxRunner(
@@ -237,16 +241,23 @@ export async function writeCachedSandboxRunner(
   provider: "instabox" | "upstashbox",
   runner: CachedSandboxRunner | null
 ) {
-  const config = resolveRtdbConfig(env);
-  if (!config || !alias) return;
-  if (!activeRtdbUrl) await getAccounts(env).catch(() => null);
-  const baseUrl = activeRtdbUrl || config.url;
-  const target = await authorizedRtdbUrl(env, config, accountWriteUrl(baseUrl, alias, `localmcpgo_runners/${provider}`));
-  const res = await fetch(target.toString(), {
+  if (!alias) return;
+  await getAccounts(env, { forceRefresh: true });
+  if (!activeRtdbUrl) throw new Error("RTDB account path could not be resolved");
+  const url = new URL(activeRtdbUrl);
+  url.pathname = url.pathname.replace(/\.json$/, "") + "/" + encodeURIComponent(alias) + "/localmcpgo_runners/" + provider + ".json";
+  const serviceAccount = resolveServiceAccountFromEnv(env);
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (serviceAccount) {
+    url.searchParams.delete("auth");
+    headers.set("Authorization", "Bearer " + await googleAccessToken(env));
+  }
+  const response = await fetch(url, {
     method: runner ? "PUT" : "DELETE",
-    ...(runner ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(runner) } : {})
+    headers,
+    ...(runner ? { body: JSON.stringify(runner) } : {})
   });
-  if (!res.ok) throw new Error("RTDB cached runner write failed: " + res.status);
+  if (!response.ok) throw new Error("Firebase RTDB cached runner write failed (HTTP " + response.status + ")");
   await clearAccountCaches(env);
 }
 
