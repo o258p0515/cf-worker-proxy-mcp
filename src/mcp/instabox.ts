@@ -164,7 +164,7 @@ function buildBootstrapCommand(
     "set -e",
     `CFG_JSON=$(printf '%s' '${b64Payload}' | base64 -d)`,
     `eval "$(printf '%s' "$CFG_JSON" | python3 -c 'import sys,json,shlex; d=json.loads(sys.stdin.read()); print("\\n".join(f"{k}={shlex.quote(str(v))}" for k,v in d.items()))' 2>/dev/null || printf '%s' "$CFG_JSON" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); for(const [k,v] of Object.entries(d)) console.log(k+"="+JSON.stringify(String(v)))')"`,
-    "mkdir -p /tmp/lmcp /tmp/mcp-root && cd /tmp/lmcp",
+    "mkdir -p /data/lmcp /tmp/mcp-root && cd /data/lmcp",
     "ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')",
     'if [ ! -x ./mcp ]; then',
     '  curl -fsSL "https://github.com/$releaseRepo/releases/latest/download/mcp-linux-$ARCH" -o mcp',
@@ -282,31 +282,58 @@ export async function runInstaBoxHubTool(
     if (!hubUrlConfig.value || token.length < 16) {
       throw new Error("InstaBox runner requires an effective Hub URL and MCP_TOKEN in RTDB or Proxy runtime.");
     }
-    const runnerName = typeof args.runner_name === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(args.runner_name.trim())
-      ? args.runner_name.trim()
-      : "instabox";
-    const runnerTags = typeof args.runner_tags === "string" && /^[A-Za-z0-9_:.,-]{1,300}$/.test(args.runner_tags.trim())
-      ? args.runner_tags.trim()
-      : "instabox,linux,go";
-    const templateId = typeof args.template === "string" && args.template.trim()
-      ? args.template.trim()
-      : ctx.defaultTemplate;
     const requestedDuration = Number(args.duration_seconds ?? 3600);
     if (!Number.isInteger(requestedDuration) || requestedDuration < 60 || requestedDuration > 86400) {
       throw new Error("duration_seconds must be an integer between 60 and 86400.");
     }
 
-    const createPayload: Record<string, unknown> = { templateId, name: runnerName };
-    const op = await request(ctx, "/v1/machines", {
-      method: "POST",
-      body: JSON.stringify(createPayload)
-    });
-    const completed = op?.id ? await waitOperation(ctx, String(op.id)) : op;
-    const machine = completed?.machine || op?.machine || {};
-    const machineId = String(machine.id || "");
-    if (!machineId) {
-      throw new Error("InstaBox machine creation succeeded without returning a machine id.");
+    const existingRef = [args.machine_id, args.box_id, args.id, args.runner_id].find(
+      v => typeof v === "string" && v.trim()
+    ) as string | undefined;
+
+    let machine: any = {};
+    let machineId = "";
+    let resumed = false;
+
+    if (existingRef) {
+      machineId = await resolveMachineId(ctx, args);
+      machine = await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}`);
+      if (String(machine?.state || "").toLowerCase() !== "running") {
+        const startOp = await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}/start`, {
+          method: "POST",
+          body: JSON.stringify({})
+        });
+        const completed = startOp?.id ? await waitOperation(ctx, String(startOp.id)) : startOp;
+        machine = completed?.machine || (await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}`));
+      }
+      resumed = true;
+    } else {
+      const initialName = typeof args.runner_name === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(args.runner_name.trim())
+        ? args.runner_name.trim()
+        : "instabox";
+      const templateId = typeof args.template === "string" && args.template.trim()
+        ? args.template.trim()
+        : ctx.defaultTemplate;
+      const createPayload: Record<string, unknown> = { templateId, name: initialName };
+      const op = await request(ctx, "/v1/machines", {
+        method: "POST",
+        body: JSON.stringify(createPayload)
+      });
+      const completed = op?.id ? await waitOperation(ctx, String(op.id)) : op;
+      machine = completed?.machine || op?.machine || {};
+      machineId = String(machine.id || "");
+      if (!machineId) {
+        throw new Error("InstaBox machine creation succeeded without returning a machine id.");
+      }
     }
+
+    const runnerName = typeof args.runner_name === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(args.runner_name.trim())
+      ? args.runner_name.trim()
+      : String(machine?.name || "instabox");
+    const runnerTags = typeof args.runner_tags === "string" && /^[A-Za-z0-9_:.,-]{1,300}$/.test(args.runner_tags.trim())
+      ? args.runner_tags.trim()
+      : "instabox,linux,go";
+    const templateId = String(machine?.template?.id || (typeof args.template === "string" && args.template.trim() ? args.template.trim() : ctx.defaultTemplate));
 
     const runnerId = `ib-${machineId}`;
     const fullTags = [
@@ -346,6 +373,7 @@ export async function runInstaBoxHubTool(
       template: templateId,
       os: "linux",
       state: machine.state || "running",
+      resumed,
       runner_tags: fullTags,
       duration_seconds: requestedDuration,
       bootstrap_exit_code: execRes?.exitCode ?? 0,
@@ -428,7 +456,7 @@ export async function runInstaBoxHubTool(
   if (name === "localmcp_hub_stop") {
     const machine = await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}`);
     const confirmName = String(machine?.name || machineId);
-    const deleteMode = args.delete !== false;
+    const deleteMode = args.delete === true;
     if (deleteMode) {
       const op = await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}`, {
         method: "DELETE",
