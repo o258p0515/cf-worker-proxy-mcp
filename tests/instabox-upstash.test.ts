@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runLocalMcpHubControlTool } from "../mcp/localmcp-hub-control";
-import { listPublicAccounts, getAccounts, clearAccountCaches } from "../rtdb/account-store";
+import { runLocalMcpHubControlTool } from "../src/mcp/localmcp-hub-control";
+import { listPublicAccounts, getAccounts, clearAccountCaches } from "../src/rtdb/account-store";
 
 afterEach(() => {
   vi.unstubAllGlobals();

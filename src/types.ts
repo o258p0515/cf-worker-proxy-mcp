@@ -1,16 +1,3 @@
-export interface Env {
-  MCP_TOKEN: string;
-  OAUTH_CLIENT_ID?: string;
-  OAUTH_CLIENT_SECRET?: string;
-  RTDB_AUTH_URL?: string;
-  FIREBASE_SERVICE_ACCOUNT_JSON?: string;
-  GITHUB_ACCOUNTS?: string;
-  LOCALMCP_HUB_ORIGIN?: string;
-  CACHE_KV: KVNamespace;
-  SSE_SESSIONS: DurableObjectNamespace;
-  LOCALMCP_HUB?: DurableObjectNamespace;
-}
-
 export type CachedSandboxRunner = {
   id: string;
   runner_id: string;
@@ -21,44 +8,27 @@ export type CachedSandboxRunner = {
   updated_at?: string;
 };
 
-export type RtdbAccount = {
-  username: string;
-  token: string;
-  description: string;
-  orgs: string[];
-  enabled: boolean;
-  readonly: boolean;
+export interface RtdbAccount {
+  username: string; token: string; description: string; orgs: string[];
+  enabled: boolean; readonly: boolean; is_catalog_source?: boolean;
   localmcpgo_secrets?: Record<string, string>;
+  localmcpgo_cache?: Record<string, unknown>;
   localmcpgo_runners?: {
     instabox?: CachedSandboxRunner;
     upstashbox?: CachedSandboxRunner;
   };
-  allowed_repositories?: string[];
-  git_credentials?: {
-    enabled?: boolean;
-    allowed_repositories?: string[];
-  };
-};
-
-export type PublicAccount = {
-  alias: string;
-  username: string;
-  description: string;
-  orgs: string[];
-  readonly: boolean;
-  providers: string[];
-};
-
-export type AuthContext = {
-  method: "static_token" | "oauth";
-  subject: string;
-  sessionId?: string;
-  pinnedAccount?: string;
-  gitExecutor?: boolean;
-};
-
-export type McpTool = {
-  name: string;
-  description?: string;
-  inputSchema: Record<string, unknown>;
-};
+  git_repositories?: string[];
+}
+export interface Env {
+  MCP_TOKEN: string; MCP_API_PASSPHRASE?: string; MCP_OAUTH_CLIENT_ID?: string; MCP_OAUTH_CLIENT_SECRET?: string;
+  MCP_VERSION?: string; GIT_EXECUTOR_TOKEN?: string;
+  RTDB_URL?: string; RTDB_AUTH_URL?: string;
+  FIREBASE_SERVICE_ACCOUNT_JSON_B64?: string; FIREBASE_SERVICE_ACCOUNT_JSON?: string;
+  PUBLIC_ORIGIN: string; GITHUB_MCP_UPSTREAM_URL?: string; GITHUB_MCP_TOOLSETS?: string;
+  RTDB_CACHE_TTL_SECONDS?: string; OAUTH_KV: KVNamespace; CACHE_KV: KVNamespace;
+  SSE_SESSIONS: DurableObjectNamespace;
+  LOCALMCP_HUB?: Fetcher; LOCALMCP_HUB_ORIGIN?: string;
+}
+export interface AuthContext { authenticated?: boolean; method: "static_token" | "oauth"; subject: string; sessionId?: string; pinnedAccount?: string }
+export interface McpTool { name: string; description?: string; inputSchema?: { type?: string; properties?: Record<string, unknown>; required?: string[]; [key:string]: unknown }; [key:string]: unknown }
+export interface JsonRpc { jsonrpc: "2.0"; id?: string|number|null; method: string; params?: any }
