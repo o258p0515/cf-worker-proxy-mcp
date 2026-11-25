@@ -63,6 +63,17 @@ describe("InstaBox & Upstash Box Hub providers", () => {
       if (url === "https://api.instabox.sh/v1/machines/m_01234567234567234567234567/exec" && method === "POST") {
         return Response.json({ exitCode: 0, stdout: "STARTED_PID=999\n", stderr: "" });
       }
+      if (url === "https://hub.example.com/mcp" && method === "POST") {
+        const rpc = JSON.parse(init.body);
+        if (rpc.method === "initialize") {
+          return Response.json({ jsonrpc: "2.0", id: rpc.id, result: { protocolVersion: "2025-03-26" } }, { headers: { "mcp-session-id": "sess-1" } });
+        }
+        return Response.json({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: { runners: [{ runner_id: "ib-m_01234567234567234567234567", status: "online" }] }
+        });
+      }
       throw new Error("Unexpected URL: " + method + " " + url);
     }));
 
@@ -80,7 +91,8 @@ describe("InstaBox & Upstash Box Hub providers", () => {
       machine_id: "m_01234567234567234567234567",
       runner_id: "ib-m_01234567234567234567234567",
       runner_name: "ib-test-1",
-      bootstrap_exit_code: 0
+      bootstrap_exit_code: 0,
+      runner_online: true
     });
     const createCall = calls.find(c => c.url.endsWith("/v1/machines") && c.method === "POST")!;
     expect(createCall.headers.get("X-API-Key")).toBe("ibk_testsecret123456");
@@ -104,6 +116,17 @@ describe("InstaBox & Upstash Box Hub providers", () => {
       if (url === "https://us-east-1.box.upstash.com/v2/box/box_abc123/exec" && method === "POST") {
         return Response.json({ output: "STARTED_PID=888\n", error: "" });
       }
+      if (url === "https://hub.example.com/mcp" && method === "POST") {
+        const rpc = JSON.parse(init.body);
+        if (rpc.method === "initialize") {
+          return Response.json({ jsonrpc: "2.0", id: rpc.id, result: { protocolVersion: "2025-03-26" } }, { headers: { "mcp-session-id": "sess-2" } });
+        }
+        return Response.json({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: { runners: [{ runner_id: "ub-box_abc123", status: "online" }] }
+        });
+      }
       throw new Error("Unexpected URL: " + method + " " + url);
     }));
 
@@ -122,7 +145,9 @@ describe("InstaBox & Upstash Box Hub providers", () => {
       runner_id: "ub-box_abc123",
       runner_name: "ub-test-1",
       runtime: "golang",
-      size: "small"
+      size: "small",
+      tailscale_skipped: true,
+      runner_online: true
     });
     const execCall = calls.find(c => c.url.endsWith("/exec"))!;
     expect(execCall.headers.get("Authorization")).toBe("Bearer upstash_secret_123456");
