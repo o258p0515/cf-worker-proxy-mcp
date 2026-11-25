@@ -185,6 +185,22 @@ function buildBootstrapCommand(
   return `printf '%s' '${scriptB64}' | base64 -d > /tmp/lmcp-start.sh && chmod +x /tmp/lmcp-start.sh && nohup sh /tmp/lmcp-start.sh > /tmp/localmcp.log 2>&1 & sleep 1 && echo "STARTED_PID=$!"`;
 }
 
+async function waitHubRunnerOnline(
+  account: RtdbAccount,
+  env: any,
+  authContext: AuthContext,
+  runnerId: string,
+  maxWaitMs = 12000
+) {
+  const deadline = Date.now() + maxWaitMs;
+  let last = await findHubRunner(account, env, authContext, runnerId);
+  while (!last.online && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    last = await findHubRunner(account, env, authContext, runnerId);
+  }
+  return last;
+}
+
 async function findHubRunner(account: RtdbAccount, env: any, authContext: AuthContext, runnerId: string) {
   try {
     const hub = await callHubTool(
@@ -320,7 +336,7 @@ export async function runInstaBoxHubTool(
       method: "POST",
       body: JSON.stringify({ cmd })
     });
-    const hubState = await findHubRunner(account, env, authContext, runnerId);
+    const hubState = await waitHubRunnerOnline(account, env, authContext, runnerId);
     return {
       provider: "instabox",
       account: alias,
@@ -361,8 +377,16 @@ export async function runInstaBoxHubTool(
   const runnerId = `ib-${machineId}`;
 
   if (name === "localmcp_hub_status") {
-    const [machine, hubState, psRes] = await Promise.all([
-      request(ctx, `/v1/machines/${encodeURIComponent(machineId)}`),
+    let machine = await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}`);
+    if (String(machine?.state || "").toLowerCase() === "suspended") {
+      const startOp = await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}/start`, {
+        method: "POST",
+        body: JSON.stringify({})
+      }).catch(() => null);
+      if (startOp?.id) await waitOperation(ctx, String(startOp.id)).catch(() => null);
+      machine = await request(ctx, `/v1/machines/${encodeURIComponent(machineId)}`).catch(() => machine);
+    }
+    const [hubState, psRes] = await Promise.all([
       findHubRunner(account, env, authContext, runnerId),
       request(ctx, `/v1/machines/${encodeURIComponent(machineId)}/exec`, {
         method: "POST",
