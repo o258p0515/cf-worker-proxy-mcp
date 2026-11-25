@@ -1,4 +1,5 @@
 import type { AuthContext, RtdbAccount } from "../types";
+import { writeCachedSandboxRunner } from "../rtdb/account-store";
 import { callHubTool, HUB_TOOL_PREFIX } from "./hub";
 
 const DEFAULT_BASE_URL = "https://us-east-1.box.upstash.com";
@@ -117,8 +118,8 @@ async function waitBoxReady(ctx: UpstashBoxContext, boxId: string, maxAttempts =
   throw new Error(`Timed out waiting for Upstash Box ${boxId} to become ready.`);
 }
 
-async function resolveBoxId(ctx: UpstashBoxContext, args: Record<string, unknown>): Promise<string> {
-  const direct = [args.box_id, args.machine_id, args.id, args.runner_id].find(
+async function resolveBoxId(ctx: UpstashBoxContext, args: Record<string, unknown>, cachedId?: string): Promise<string> {
+  const direct = [args.box_id, args.machine_id, args.id, args.runner_id, cachedId].find(
     v => typeof v === "string" && v.trim()
   ) as string | undefined;
   if (direct) {
@@ -248,6 +249,7 @@ export async function runUpstashBoxHubTool(
 ) {
   const ctx = context(account);
   const accountSecrets = secrets(account);
+  const cachedRunner = account.localmcpgo_runners?.upstashbox;
 
   if (name === "localmcp_hub_check_secrets") {
     const boxes = await request(ctx, "/v2/box");
@@ -267,6 +269,7 @@ export async function runUpstashBoxHubTool(
       hub_urls_source: hubUrlConfig.source,
       token_source: accountSecrets.MCP_TOKEN ? "RTDB localmcpgo_secrets" : hubToken ? "Proxy runtime MCP_TOKEN" : null,
       optional_configured_names: optionalConfigured,
+      cached_runner: cachedRunner || null,
       values_returned: false
     };
   }
@@ -282,23 +285,37 @@ export async function runUpstashBoxHubTool(
       throw new Error("duration_seconds must be an integer between 60 and 86400.");
     }
 
-    const existingRef = [args.box_id, args.machine_id, args.id, args.runner_id].find(
+    const explicitRef = [args.box_id, args.machine_id, args.id, args.runner_id].find(
       v => typeof v === "string" && v.trim()
     ) as string | undefined;
+    const reuseCached = args.reuse_cached !== false;
 
     let boxId = "";
-    let readyBox: any = {};
+    let readyBox: any = null;
     let resumed = false;
+    let cacheSource: "explicit" | "rtdb_cache" | "new" = "new";
 
-    if (existingRef) {
-      boxId = await resolveBoxId(ctx, args);
-      const current = await request(ctx, `/v2/box/${encodeURIComponent(boxId)}`);
-      if (String(current?.status || "").toLowerCase() === "paused") {
-        await request(ctx, `/v2/box/${encodeURIComponent(boxId)}/resume`, { method: "POST" }).catch(() => null);
+    const candidateRef = explicitRef || (reuseCached && cachedRunner?.id ? cachedRunner.id : undefined);
+    if (candidateRef) {
+      try {
+        const resolvedId = await resolveBoxId(ctx, args, candidateRef);
+        const current = await request(ctx, `/v2/box/${encodeURIComponent(resolvedId)}`);
+        if (current?.id) {
+          boxId = String(current.id);
+          if (String(current.status || "").toLowerCase() === "paused") {
+            await request(ctx, `/v2/box/${encodeURIComponent(boxId)}/resume`, { method: "POST" }).catch(() => null);
+          }
+          readyBox = await waitBoxReady(ctx, boxId);
+          resumed = true;
+          cacheSource = explicitRef ? "explicit" : "rtdb_cache";
+        }
+      } catch (err) {
+        if (explicitRef) throw err;
+        // Cached box no longer exists on Upstash; fall back to creating a fresh one.
       }
-      readyBox = await waitBoxReady(ctx, boxId);
-      resumed = true;
-    } else {
+    }
+
+    if (!boxId) {
       const initialName = typeof args.runner_name === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(args.runner_name.trim())
         ? args.runner_name.trim()
         : `upstash-${Date.now()}`;
@@ -363,6 +380,16 @@ export async function runUpstashBoxHubTool(
       body: JSON.stringify({ command: ["sh", "-c", cmd] })
     });
     const hubState = await waitHubRunnerOnline(account, env, authContext, runnerId);
+
+    await writeCachedSandboxRunner(env, alias, "upstashbox", {
+      id: boxId,
+      runner_id: runnerId,
+      name: runnerName,
+      runtime,
+      size,
+      updated_at: new Date().toISOString()
+    }).catch(() => null);
+
     return {
       provider: "upstashbox",
       account: alias,
@@ -374,6 +401,7 @@ export async function runUpstashBoxHubTool(
       os: "linux",
       status: readyBox?.status || "running",
       resumed,
+      cache_source: cacheSource,
       runner_tags: fullTags,
       duration_seconds: requestedDuration,
       tailscale_skipped: skipTailscale,
@@ -390,6 +418,7 @@ export async function runUpstashBoxHubTool(
     return {
       provider: "upstashbox",
       account: alias,
+      cached_runner: cachedRunner || null,
       runs: list.map((b: any) => ({
         box_id: b.id,
         runner_id: `ub-${b.id}`,
@@ -397,12 +426,13 @@ export async function runUpstashBoxHubTool(
         status: b.status,
         runtime: b.runtime,
         size: b.size,
+        cached_in_rtdb: cachedRunner?.id === b.id,
         created_at: b.created_at
       }))
     };
   }
 
-  const boxId = await resolveBoxId(ctx, args);
+  const boxId = await resolveBoxId(ctx, args, cachedRunner?.id);
   const runnerId = `ub-${boxId}`;
 
   if (name === "localmcp_hub_status") {
@@ -423,6 +453,7 @@ export async function runUpstashBoxHubTool(
       status: info?.status,
       runtime: info?.runtime,
       size: info?.size,
+      cached_in_rtdb: cachedRunner?.id === boxId,
       runner_online: hubState.online,
       hub_runner: hubState.runner,
       process: String(psRes?.output || "").trim()
@@ -456,15 +487,27 @@ export async function runUpstashBoxHubTool(
     const deleteMode = args.delete === true;
     if (!deleteMode) {
       await request(ctx, `/v2/box/${encodeURIComponent(boxId)}/pause`, { method: "POST" });
+      await writeCachedSandboxRunner(env, alias, "upstashbox", {
+        id: boxId,
+        runner_id: runnerId,
+        name: cachedRunner?.name,
+        runtime: cachedRunner?.runtime || ctx.defaultRuntime,
+        size: cachedRunner?.size || ctx.defaultSize,
+        updated_at: new Date().toISOString()
+      }).catch(() => null);
       return {
         provider: "upstashbox",
         account: alias,
         box_id: boxId,
         runner_id: runnerId,
-        paused: true
+        paused: true,
+        cached_in_rtdb: true
       };
     }
     await request(ctx, `/v2/box/${encodeURIComponent(boxId)}`, { method: "DELETE" });
+    if (cachedRunner?.id === boxId) {
+      await writeCachedSandboxRunner(env, alias, "upstashbox", null).catch(() => null);
+    }
     return {
       provider: "upstashbox",
       account: alias,
