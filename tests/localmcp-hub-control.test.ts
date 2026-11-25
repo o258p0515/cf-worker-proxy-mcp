@@ -77,5 +77,48 @@ describe("separate LocalMCP Hub lifecycle controls", () => {
     await expect(runLocalMcpHubControlTool("localmcp_hub_check_secrets", {}, both as any)).rejects.toThrow(/multiple providers.*provider='github'.*provider='azure'/i);
   });
 
+  it("requires explicit provider selection when GitHub and Azure are in separate RTDB accounts, and routes Azure to the Azure account", async () => {
+    const azureAccount = {
+      username: "aerielaaeriel651971", token: "", description: "", orgs: [], enabled: true, readonly: false,
+      localmcpgo_secrets: { AZURE_DEVOPS_PAT: "unit-secret-azure-123456", AZURE_DEVOPS_ORG_URL: "https://dev.azure.com/aerielaaeriel651971", HUB_URLS: "https://hub.example.com", MCP_TOKEN: "shared-token-0123456789abcdef" },
+      localmcpgo_cache: {
+        azure_devops: {
+          fingerprint: "unused", discovered_at: 0, projects: [], repositories: {}, pipelines: {}
+        }
+      }
+    } as any;
+    const allAccounts = { personal: account, "azure-aerielaaeriel651971": azureAccount };
+    await expect(runLocalMcpHubControlTool("localmcp_hub_start", {}, account, "", "personal", {}, undefined, allAccounts))
+      .rejects.toThrow(/multiple providers.*provider='github'.*provider='azure'/i);
+
+    const env = {
+      RTDB_AUTH_URL: "https://unit.firebaseio.com/github_accounts.json?auth=unit-secret",
+      MCP_TOKEN: "shared-token-0123456789abcdef",
+      CACHE_KV: { get: async () => null, put: async () => {}, delete: async () => {} }
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
+      const url = String(input);
+      if (url.includes("unit.firebaseio.com")) {
+        if (init.method === "PUT") return Response.json({});
+        return Response.json({ personal: account, "azure-aerielaaeriel651971": azureAccount });
+      }
+      if (url.includes("/_apis/projects")) return Response.json({ value: [{ id: "p1", name: "Project A" }] });
+      if (url.includes("/_apis/git/repositories")) return Response.json({ value: [{ id: "r1", name: "runner-config", defaultBranch: "refs/heads/main" }] });
+      if (url.includes("/_apis/pipelines")) return Response.json({ value: [] });
+      throw new Error("Unexpected URL " + url);
+    }));
+    const res = await runLocalMcpHubControlTool("localmcp_hub_check_secrets", { provider: "azure", project: "Project A" }, account, "", "personal", env, undefined, allAccounts);
+    expect(res).toMatchObject({ provider: "azure", account: "azure-aerielaaeriel651971", selected_project: "Project A" });
+  });
+
+  it("runs the single configured provider regardless of what provider argument is passed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes("/actions/workflows/hub-runner.yml/runs")) return Response.json({ workflow_runs: [] });
+      throw new Error("Unexpected URL " + url);
+    }));
+    const res = await runLocalMcpHubControlTool("localmcp_hub_runs", { provider: "azure" }, account, "", "personal", {}, undefined, { personal: account });
+    expect(res).toMatchObject({ provider: "github", repository: "o258p0515/localmcpcoder-go" });
+  });
+
 });
-   81

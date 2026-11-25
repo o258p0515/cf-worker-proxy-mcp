@@ -120,7 +120,8 @@ export async function handleJsonRpcMessage(msg: JsonRpc, env: Env, ctx: AuthCont
         return result(msg.id, textResult(`Account '${alias}' is read-only; this write operation is blocked.`, true));
       }
       if (LOCALMCP_HUB_CONTROL_TOOLS.has(name)) {
-        const hubControl = await runLocalMcpHubControlTool(name, args, account, env.MCP_TOKEN, alias, env, ctx);
+        const allAccounts = ctx.pinnedAccount ? { [alias]: account } : await getAccounts(env);
+        const hubControl = await runLocalMcpHubControlTool(name, args, account, env.MCP_TOKEN, alias, env, ctx, allAccounts);
         return hasId ? result(msg.id, textResult(hubControl)) : null;
       }
       if (name === "localmcp_hub_check_connection") {
