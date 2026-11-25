@@ -121,4 +121,20 @@ describe("separate LocalMCP Hub lifecycle controls", () => {
     expect(res).toMatchObject({ provider: "github", repository: "o258p0515/localmcpcoder-go" });
   });
 
+  it("syncs optional Tailscale secrets on GitHub Hub start when configured in RTDB", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/actions/workflows/hub-runner.yml")) return Response.json({ id: 123, path: ".github/workflows/hub-runner.yml", state: "active" });
+      if (url.includes("/actions/workflows/hub-runner.yml/runs")) return Response.json({ workflow_runs: [] });
+      if (url === "https://api.github.com/repos/o258p0515/localmcpcoder-go") return Response.json({ default_branch: "main" });
+      if (url.endsWith("/dispatches")) return new Response(null, { status: 204 });
+      throw new Error("Unexpected request " + url);
+    }));
+    secretTool.mockImplementation(async (name: string) => name === "list_github_secrets" ? { secrets: [] } : { updated: true });
+    const withTs = { ...account, localmcpgo_secrets: { ...account.localmcpgo_secrets, TS_TRUST_CREDS: "tskey-client-id-secret", TS_TAGS: "tag:localmcpcoder" } };
+    await runLocalMcpHubControlTool("localmcp_hub_start", { runner_name: "ts-gh" }, withTs, "", "personal");
+    const writes = secretTool.mock.calls.filter(call => call[0] === "set_github_secret");
+    expect(writes.map(call => call[1].secret_name)).toEqual(["HUB_URLS", "MCP_TOKEN", "TS_TRUST_CREDS", "TS_TAGS"]);
+  });
+
 });
