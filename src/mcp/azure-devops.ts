@@ -119,7 +119,7 @@ async function ensureProjectResources(ctx: AzureContext, account: RtdbAccount, a
 }
 
 function yamlForRunner() {
-  return `# LOCALMCP_HUB_RUNNER_TEMPLATE: v9
+  return `# LOCALMCP_HUB_RUNNER_TEMPLATE: v10
 parameters:
   - name: os
     type: string
@@ -142,7 +142,7 @@ parameters:
     default: main
   - name: predecessor_id
     type: string
-    default: ''
+    default: none
   - name: generation
     type: number
     default: 1
@@ -190,7 +190,7 @@ jobs:
           TAGS="provider:azure,os:linux,account:\${{ parameters.account_alias }},run:$(Build.BuildId),name:\${{ parameters.runner_name }},gen:\${{ parameters.generation }},\${{ parameters.runner_tags }}"
           EXTRA_ARGS=(--duration-seconds "\${{ parameters.duration_seconds }}" --handover-after "\${{ parameters.handover_after }}" --idle-timeout "\${{ parameters.idle_timeout }}" --generation "\${{ parameters.generation }}")
           PREDECESSOR_ID="\${{ parameters.predecessor_id }}"
-          if [ -n "$PREDECESSOR_ID" ]; then EXTRA_ARGS+=(--predecessor-id "$PREDECESSOR_ID"); fi
+          if [ -n "$PREDECESSOR_ID" ] && [ "$PREDECESSOR_ID" != "none" ]; then EXTRA_ARGS+=(--predecessor-id "$PREDECESSOR_ID"); fi
           STATUS=0
           trap 'echo runner-task-interrupted; exit 0' TERM INT
           timeout --signal=TERM --kill-after=20s "\${{ parameters.duration_seconds }}s" "$(Agent.TempDirectory)/localmcpcoder-mcp" --root "$(Agent.TempDirectory)/mcp-root-$(Build.BuildId)" --tunnel hub --hub-urls "$HUB_URLS" --runner-id "$RUNNER_ID" --runner-tags "$TAGS" "\${EXTRA_ARGS[@]}" || STATUS=$?
@@ -217,7 +217,7 @@ jobs:
           $env:MCP_TOKEN = '$(MCP_TOKEN)'
           $argList = @('--root', '$(Agent.TempDirectory)\\mcp-root-$(Build.BuildId)', '--tunnel', 'hub', '--hub-urls', $env:HUB_URLS, '--runner-id', $runnerId, '--runner-tags', $tags, '--duration-seconds', '\${{ parameters.duration_seconds }}', '--handover-after', '\${{ parameters.handover_after }}', '--idle-timeout', '\${{ parameters.idle_timeout }}', '--generation', '\${{ parameters.generation }}')
           $pred = '\${{ parameters.predecessor_id }}'
-          if (-not [string]::IsNullOrWhiteSpace($pred)) { $argList += @('--predecessor-id', $pred) }
+          if (-not [string]::IsNullOrWhiteSpace($pred) -and $pred -ne 'none') { $argList += @('--predecessor-id', $pred) }
           $p = Start-Process -FilePath '$(Agent.TempDirectory)\\localmcpcoder-mcp.exe' -ArgumentList $argList -PassThru -NoNewWindow
           $deadline = (Get-Date).AddSeconds([int]'\${{ parameters.duration_seconds }}')
           while (-not $p.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2; $p.Refresh() }
@@ -246,13 +246,13 @@ async function ensureRunnerYaml(ctx: AzureContext, project: Project, repository:
     if (!(error instanceof Error) || !error.message.includes("HTTP 404")) throw error;
   }
   const yaml = yamlForRunner();
-  if (existing && (typeof existing.content !== "string" || !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v1") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v2") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v3") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v4") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v5") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v6") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v7") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v8") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v9"))) {
+  if (existing && (typeof existing.content !== "string" || !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v1") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v2") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v3") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v4") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v5") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v6") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v7") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v8") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v9") && !existing.content.includes("LOCALMCP_HUB_RUNNER_TEMPLATE: v10"))) {
     throw new Error("Azure Repos already contains /azure-pipelines.yml, but it is not managed by LocalMCP Hub. The file was not overwritten; choose another repository or integrate the runner YAML manually.");
   }
   if (existing?.content === yaml) return;
   await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id + "/pushes", {
     method: "POST",
-    body: JSON.stringify({ refUpdates: [{ name: "refs/heads/" + branch, oldObjectId: ref.objectId }], commits: [{ comment: "ci: update LocalMCP Hub Azure Pipelines runner template v9", changes: [{ changeType: existing ? "edit" : "add", item: { path: "/azure-pipelines.yml" }, newContent: { content: yaml, contentType: "rawtext" } }] }] })
+    body: JSON.stringify({ refUpdates: [{ name: "refs/heads/" + branch, oldObjectId: ref.objectId }], commits: [{ comment: "ci: update LocalMCP Hub Azure Pipelines runner template v10", changes: [{ changeType: existing ? "edit" : "add", item: { path: "/azure-pipelines.yml" }, newContent: { content: yaml, contentType: "rawtext" } }] }] })
   });
 }
 async function bootstrap(ctx: AzureContext, project: Project, repository: Repository, alias: string, pipelineName = "LocalMCP Hub Runner"): Promise<Pipeline> {
@@ -386,7 +386,7 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
     const token = String(secrets(account).MCP_TOKEN || env.MCP_TOKEN || "").trim();
     if (!hubUrls || token.length < 16) throw new Error("Azure runner requires an effective Hub URL and MCP_TOKEN in RTDB or Proxy runtime.");
     const variableGroup = await ensureVariableGroup(ctx, project, alias, hubUrls, token, pipeline.id, secrets(account));
-    const predecessorId = typeof args.predecessor_id === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(args.predecessor_id.trim()) ? args.predecessor_id.trim() : "";
+    const predecessorId = typeof args.predecessor_id === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(args.predecessor_id.trim()) ? args.predecessor_id.trim() : "none";
     const generationRaw = args.generation === undefined ? 1 : Number(args.generation);
     const generation = Number.isInteger(generationRaw) && generationRaw >= 1 ? generationRaw : 1;
     const handoverAfterRaw = args.handover_after === undefined ? 0 : Number(args.handover_after);
