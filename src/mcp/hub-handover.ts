@@ -111,7 +111,7 @@ export async function handleHubHandover(req: Request, env: Env): Promise<Respons
   if (!RUNNER_ID_RE.test(predecessorId)) return reply({ error: "invalid_predecessor_id" }, 400);
 
   const generation = input.generation === undefined ? 2 : Number(input.generation);
-  if (!Number.isInteger(generation) || generation < 2 || generation > 20) {
+  if (!Number.isInteger(generation) || generation < 2 || generation > 100000) {
     return reply({ error: "invalid_generation" }, 400);
   }
 
@@ -134,20 +134,25 @@ export async function handleHubHandover(req: Request, env: Env): Promise<Respons
 
   const allAccounts = await getAccounts(env);
 
-  // Azure DevOps MS-hosted Free Tier allows only 1 concurrent job per org, so
-  // Make-Before-Break cannot overlap two Azure jobs. Fall back to GitHub Actions
-  // (same OS) or a persistent Linux sandbox when GitHub is unavailable.
-  let targetProvider = rawProvider === "azure" ? "github" : (rawProvider || "github");
-  let fallbackFrom: string | undefined = rawProvider === "azure" ? "azure" : undefined;
+  // Keep same-provider Make-Before-Break handover (including Azure -> Azure when
+  // a writable Azure account is available); fall back to GitHub Actions or a
+  // persistent Linux sandbox only if no writable Azure account is configured.
+  let targetProvider = rawProvider || "github";
+  let fallbackFrom: string | undefined;
 
   let chosen = pickAccountForProvider(allAccounts, accountAlias, targetProvider);
-  if (!chosen && fallbackFrom === "azure" && os === "linux") {
-    for (const alt of ["upstashbox", "instabox"]) {
-      const candidate = pickAccountForProvider(allAccounts, accountAlias, alt);
-      if (candidate) {
-        targetProvider = alt;
-        chosen = candidate;
-        break;
+  if (!chosen && rawProvider === "azure") {
+    fallbackFrom = "azure";
+    targetProvider = "github";
+    chosen = pickAccountForProvider(allAccounts, accountAlias, "github");
+    if (!chosen && os === "linux") {
+      for (const alt of ["upstashbox", "instabox"]) {
+        const candidate = pickAccountForProvider(allAccounts, accountAlias, alt);
+        if (candidate) {
+          targetProvider = alt;
+          chosen = candidate;
+          break;
+        }
       }
     }
   }

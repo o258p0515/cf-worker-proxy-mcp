@@ -67,7 +67,7 @@ describe("Azure DevOps Hub provider", () => {
     expect(result).toMatchObject({ provider: "azure", run_id: 991, runner_id: "az-linux-991", os: "linux", duration_seconds: 3300, state: "running", variable_group: { id: 12, name: "LocalMCP-Hub-azure", secret_values_returned: false, authorized: true, pipeline_id: 77 } });
     const yamlPush = calls.find(c => c.url.includes("/_apis/git/repositories/repo-id/pushes"));
     const runnerYaml = JSON.parse(yamlPush.init.body).commits[0].changes[0].newContent.content;
-    expect(runnerYaml).toContain("LOCALMCP_HUB_RUNNER_TEMPLATE: v8");
+    expect(runnerYaml).toContain("LOCALMCP_HUB_RUNNER_TEMPLATE: v9");
     expect(runnerYaml).toContain("TS_TRUST_CREDS: $(TS_TRUST_CREDS)");
     expect(runnerYaml).toContain("elseif ($null -ne $p.ExitCode -and $p.ExitCode -ne 0)");
     expect(runnerYaml).toContain("Runner shutdown completed");
