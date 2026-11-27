@@ -14,5 +14,14 @@ describe("agent account and Actions secret controls", () => {
     expect(tools.every(tool => !tool.inputSchema?.properties?.account)).toBe(true);
     const dashboardLocalMcp = getProxyCustomTools(true).find(tool => tool.name === "localmcp_start");
     expect(dashboardLocalMcp?.inputSchema?.properties?.account).toBeTruthy();
+
+    const hubStart = tools.find(tool => tool.name === "localmcp_hub_start");
+    expect(hubStart?.description).toContain("handover_state='spawning'");
+    expect(hubStart?.inputSchema?.properties).toMatchObject({
+      handover_after: { type: "integer" },
+      idle_timeout: { type: "integer" },
+      predecessor_id: { type: "string" },
+      generation: { type: "integer" }
+    });
   });
 });
