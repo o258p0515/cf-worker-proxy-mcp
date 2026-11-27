@@ -202,15 +202,15 @@ describe("internal Hub handover bridge", () => {
     expect(dispatchCalls[0]!.body.inputs.runner_tags).not.toContain("provider:github");
   });
 
-  it("falls back from Azure DevOps free tier to GitHub Actions keeping OS and tags", async () => {
+  it("falls back from Azure DevOps to GitHub Actions when no writable Azure account is available", async () => {
     const { dispatchCalls } = mockGitHubDispatchFetch({
       "azure-acc": {
         username: "azureuser",
         token: "",
-        description: "Azure",
+        description: "Azure readonly",
         orgs: ["azureuser"],
         enabled: true,
-        readonly: false,
+        readonly: true,
         localmcpgo_secrets: {
           AZURE_DEVOPS_PAT: "azpat-secret",
           AZURE_DEVOPS_ORG_URL: "https://dev.azure.com/azureuser"
