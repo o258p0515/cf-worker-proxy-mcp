@@ -21,7 +21,7 @@ export interface RtdbAccount {
 }
 export interface Env {
   MCP_TOKEN: string; MCP_API_PASSPHRASE?: string; MCP_OAUTH_CLIENT_ID?: string; MCP_OAUTH_CLIENT_SECRET?: string;
-  MCP_VERSION?: string; GIT_EXECUTOR_TOKEN?: string;
+  MCP_VERSION?: string; GIT_EXECUTOR_TOKEN?: string; HUB_CONTROL_TOKEN?: string;
   RTDB_URL?: string; RTDB_AUTH_URL?: string;
   FIREBASE_SERVICE_ACCOUNT_JSON_B64?: string; FIREBASE_SERVICE_ACCOUNT_JSON?: string;
   PUBLIC_ORIGIN: string; GITHUB_MCP_UPSTREAM_URL?: string; GITHUB_MCP_TOOLSETS?: string;

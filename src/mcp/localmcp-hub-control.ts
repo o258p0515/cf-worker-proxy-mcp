@@ -133,8 +133,14 @@ export async function runLocalMcpHubControlTool(name: string, args: Record<strin
     const runnerOs = args.os === "windows" ? "windows" : "linux";
     const duration = args.duration_seconds === undefined ? 20400 : Number(args.duration_seconds);
     if (!/^[A-Za-z0-9_.-]{1,64}$/.test(runnerName)) throw new Error("runner_name must be 1-64 letters, digits, dot, underscore or hyphen.");
-    if (runnerTags.length > 500 || !/^[A-Za-z0-9_.,-]*$/.test(runnerTags)) throw new Error("runner_tags contains unsupported characters or is too long.");
+    if (runnerTags.length > 500 || !/^[A-Za-z0-9_.,:-]*$/.test(runnerTags)) throw new Error("runner_tags contains unsupported characters or is too long.");
     if (!Number.isInteger(duration) || duration < 60 || duration > 20400) throw new Error("duration_seconds must be between 60 and 20400.");
+    const predecessorId = typeof args.predecessor_id === "string" ? args.predecessor_id.trim() : "";
+    if (predecessorId && !/^[A-Za-z0-9._:-]{1,128}$/.test(predecessorId)) throw new Error("predecessor_id contains unsupported characters.");
+    const generation = args.generation === undefined ? 1 : Number(args.generation);
+    if (!Number.isInteger(generation) || generation < 1) throw new Error("generation must be a positive integer.");
+    const handoverAfter = args.handover_after === undefined ? undefined : Number(args.handover_after);
+    const idleTimeout = args.idle_timeout === undefined ? undefined : Number(args.idle_timeout);
     const existingSecrets = await runGitHubSecretTool("list_github_secrets", repo, targetAccount.token);
     const existingNames = Array.isArray(existingSecrets.secrets) ? existingSecrets.secrets.map((item: any) => String(item.name)) : [];
     const wf = await workflow(targetAccount.token, repo);
@@ -145,7 +151,18 @@ export async function runLocalMcpHubControlTool(name: string, args: Record<strin
       if (val) await runGitHubSecretTool("set_github_secret", { ...repo, secret_name: key, value: val }, targetAccount.token);
     }
     const repository = await github(targetAccount.token, path);
-    await github(targetAccount.token, path + "/actions/workflows/" + WORKFLOW + "/dispatches", { method: "POST", body: JSON.stringify({ ref: String(repository.default_branch || "main"), inputs: { runner_name: runnerName, runner_tags: runnerTags, duration_seconds: String(duration), runner_os: runnerOs, account_alias: targetAlias } }) });
+    const dispatchInputs: Record<string, string> = {
+      runner_name: runnerName,
+      runner_tags: runnerTags,
+      duration_seconds: String(duration),
+      runner_os: runnerOs,
+      account_alias: targetAlias,
+      ...(predecessorId ? { predecessor_id: predecessorId } : {}),
+      ...(generation > 1 ? { generation: String(generation) } : {}),
+      ...(handoverAfter !== undefined && Number.isInteger(handoverAfter) ? { handover_after: String(handoverAfter) } : {}),
+      ...(idleTimeout !== undefined && Number.isInteger(idleTimeout) ? { idle_timeout: String(idleTimeout) } : {})
+    };
+    await github(targetAccount.token, path + "/actions/workflows/" + WORKFLOW + "/dispatches", { method: "POST", body: JSON.stringify({ ref: String(repository.default_branch || "main"), inputs: dispatchInputs }) });
     const recent = await runs(targetAccount.token, repo, 10);
     const run = recent.find((item: any) => item.event === "workflow_dispatch" && Date.now() - Date.parse(item.created_at || 0) < 120000);
     const runnerId = run ? (runnerOs === "windows" ? "gh-win-" : "gh-linux-") + run.id : null;
