@@ -5,6 +5,7 @@ import { SseSessionDO } from "./mcp/sse-session-do";
 import { swaggerPage, handleApiRpc } from "./api/swagger";
 import { MCP_VERSION } from "./version";
 import { handleGitCredential } from "./mcp/git-credential";
+import { handleHubHandover } from "./mcp/hub-handover";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -23,9 +24,10 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const u = new URL(req.url), path = u.pathname;
 
-    // This endpoint is machine-to-machine only. Never attach wildcard browser CORS,
-    // including to OPTIONS requests; authenticate it inside the handler.
+    // These endpoints are machine-to-machine only. Never attach wildcard browser CORS,
+    // including to OPTIONS requests; authenticate inside each handler.
     if (path === "/internal/runner/git-credential") return handleGitCredential(req, env);
+    if (path === "/internal/hub/handover") return handleHubHandover(req, env);
 
     if (req.method === "OPTIONS") return withCors(new Response(null, { status: 204 }));
     if (req.method === "GET" && path === "/health") return withCors(Response.json({ status: "ok", service: "github-mcp-proxy", version: MCP_VERSION }));
