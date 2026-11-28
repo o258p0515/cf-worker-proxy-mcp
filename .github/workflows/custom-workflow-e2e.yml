@@ -1,0 +1,67 @@
+name: Custom Raw YAML Workflow E2E
+on:
+  push:
+    branches:
+      - feat/custom-raw-yaml-workflows
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run against isolated preview Worker or production endpoint"
+        type: choice
+        required: true
+        default: preview
+        options:
+          - preview
+          - production
+permissions:
+  contents: read
+concurrency:
+  group: custom-workflow-e2e-${{ inputs.mode || 'preview' }}
+  cancel-in-progress: false
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install, typecheck and unit test
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm test
+          node --check scripts/custom-workflow-e2e.mjs
+      - name: Prepare isolated Cloudflare preview
+        if: ${{ (inputs.mode || 'preview') == 'preview' }}
+        env:
+          CF_API_EMAIL: ${{ secrets.CF_API_EMAIL }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          CF_DOMAIN: ${{ secrets.CF_DOMAIN }}
+        run: node scripts/prepare-preview.mjs
+      - name: Deploy isolated preview Worker
+        if: ${{ (inputs.mode || 'preview') == 'preview' }}
+        run: npx wrangler deploy --config wrangler.preview.jsonc
+      - name: Sync preview runtime secrets
+        if: ${{ (inputs.mode || 'preview') == 'preview' }}
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          GIT_EXECUTOR_TOKEN: ${{ secrets.GIT_EXECUTOR_TOKEN }}
+          MCP_API_PASSPHRASE: ${{ secrets.MCP_API_PASSPHRASE }}
+          MCP_OAUTH_CLIENT_ID: ${{ secrets.MCP_OAUTH_CLIENT_ID }}
+          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
+          RTDB_URL: ${{ secrets.RTDB_URL }}
+          RTDB_AUTH_URL: ${{ secrets.RTDB_AUTH_URL }}
+          FIREBASE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_B64 }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/sync-secrets.mjs | npx wrangler secret bulk --config wrangler.preview.jsonc
+      - name: Run Custom Raw YAML E2E (GitHub + Azure)
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+          TARGET_DOMAIN: ${{ (inputs.mode || 'preview') == 'production' && format('https://{0}', secrets.MCP_DOMAIN) || env.PREVIEW_DOMAIN }}
+        run: |
+          sleep 5
+          node scripts/custom-workflow-e2e.mjs
