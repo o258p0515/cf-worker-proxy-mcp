@@ -52,6 +52,10 @@ function sanitizeInheritedTags(tags: string[]): string {
       !t.startsWith("run:") &&
       !t.startsWith("gen:") &&
       !t.startsWith("name:") &&
+      !t.startsWith("workflow:") &&
+      !t.startsWith("pipeline_id:") &&
+      !t.startsWith("project:") &&
+      !t.startsWith("azrepo:") &&
       /^[A-Za-z0-9_.:-]+$/.test(t)
     );
   return [...new Set(filtered)].join(",");
@@ -174,6 +178,11 @@ export async function handleHubHandover(req: Request, env: Env): Promise<Respons
     ? input.idle_timeout
     : undefined;
 
+  const workflowTag = tagValue(tags, "workflow:");
+  const pipelineIdRaw = tagValue(tags, "pipeline_id:");
+  const pipelineId = /^\d+$/.test(pipelineIdRaw) && Number(pipelineIdRaw) > 0 ? Number(pipelineIdRaw) : undefined;
+  const projectTag = tagValue(tags, "project:");
+  const azrepoTag = tagValue(tags, "azrepo:");
   const repoTarget = parseRepo(repoStr);
   const startArgs: Record<string, unknown> = {
     provider: targetProvider,
@@ -185,6 +194,10 @@ export async function handleHubHandover(req: Request, env: Env): Promise<Respons
     ...(durationSeconds !== undefined ? { duration_seconds: durationSeconds } : {}),
     ...(handoverAfter !== undefined ? { handover_after: handoverAfter } : {}),
     ...(idleTimeout !== undefined ? { idle_timeout: idleTimeout } : {}),
+    ...(targetProvider === "github" && workflowTag ? { workflow: workflowTag } : {}),
+    ...(targetProvider === "azure" && pipelineId !== undefined ? { pipeline_id: pipelineId } : {}),
+    ...(targetProvider === "azure" && projectTag ? { project: projectTag } : {}),
+    ...(targetProvider === "azure" && azrepoTag ? { repository: azrepoTag } : {}),
     ...repoTarget
   };
 
