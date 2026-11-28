@@ -2,6 +2,15 @@ import type { RtdbAccount } from "../types";
 import { setLocalMcpCache } from "../rtdb/account-store";
 import type { AuthContext } from "../types";
 import { callHubTool, HUB_TOOL_PREFIX } from "./hub";
+import {
+  DEFAULT_AZURE_PIPELINE_NAME,
+  DEFAULT_AZURE_YAML_PATH,
+  appendRoutingTags,
+  deriveCustomAzureYamlPath,
+  isCustomAzureYamlPath,
+  normalizeAzureYamlPath,
+  validateAzureRunnerYaml
+} from "./hub-workflow-utils";
 
 const API = "7.1";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -268,6 +277,76 @@ async function validateRunnerPipeline(ctx: AzureContext, project: Project, pipel
   }
   return pipeline;
 }
+async function refreshPipelines(ctx: AzureContext, account: RtdbAccount, alias: string, env: any, discovery: Discovery, project: Project): Promise<Pipeline[]> {
+  const pipelinesData = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines");
+  const list: Pipeline[] = (pipelinesData.value || []).map((p: any) => ({ id: Number(p.id), name: String(p.name), folder: p.folder, url: p.url }));
+  discovery.pipelines[project.id] = list;
+  await setLocalMcpCache(env, alias, { ...(account.localmcpgo_cache || {}), azure_devops: discovery });
+  return list;
+}
+async function getPipelineDetail(ctx: AzureContext, project: Project, pipelineId: number) {
+  return request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines/" + pipelineId);
+}
+async function readAzureRepoFile(ctx: AzureContext, project: Project, repository: Repository, filePath: string): Promise<{ content: string; branch: string } | null> {
+  const branch = (repository.defaultBranch || "refs/heads/main").replace("refs/heads/", "");
+  try {
+    const item = await request(
+      ctx,
+      "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id +
+      "/items?path=" + encodeURIComponent(filePath) +
+      "&includeContent=true&versionDescriptor.version=" + encodeURIComponent(branch) +
+      "&versionDescriptor.versionType=branch"
+    );
+    return { content: typeof item?.content === "string" ? item.content : "", branch };
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("HTTP 404")) return null;
+    throw error;
+  }
+}
+async function pushAzureRepoFile(ctx: AzureContext, project: Project, repository: Repository, filePath: string, content: string, commitMessage: string): Promise<{ action: "created" | "updated"; branch: string }> {
+  const branch = (repository.defaultBranch || "refs/heads/main").replace("refs/heads/", "");
+  const refs = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id + "/refs?filter=heads/" + encodeURIComponent(branch));
+  const ref = (refs.value || []).find((v: any) => v.name === "refs/heads/" + branch);
+  if (!ref?.objectId) throw new Error("Could not resolve default branch '" + branch + "' for Azure Repos repository '" + repository.name + "'.");
+  const existing = await readAzureRepoFile(ctx, project, repository, filePath);
+  await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id + "/pushes", {
+    method: "POST",
+    body: JSON.stringify({
+      refUpdates: [{ name: "refs/heads/" + branch, oldObjectId: ref.objectId }],
+      commits: [{
+        comment: commitMessage,
+        changes: [{
+          changeType: existing ? "edit" : "add",
+          item: { path: filePath },
+          newContent: { content, contentType: "rawtext" }
+        }]
+      }]
+    })
+  });
+  return { action: existing ? "updated" : "created", branch };
+}
+async function deleteAzureRepoFile(ctx: AzureContext, project: Project, repository: Repository, filePath: string, commitMessage: string): Promise<boolean> {
+  const branch = (repository.defaultBranch || "refs/heads/main").replace("refs/heads/", "");
+  const existing = await readAzureRepoFile(ctx, project, repository, filePath);
+  if (!existing) return false;
+  const refs = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id + "/refs?filter=heads/" + encodeURIComponent(branch));
+  const ref = (refs.value || []).find((v: any) => v.name === "refs/heads/" + branch);
+  if (!ref?.objectId) throw new Error("Could not resolve default branch '" + branch + "' for Azure Repos repository '" + repository.name + "'.");
+  await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/git/repositories/" + repository.id + "/pushes", {
+    method: "POST",
+    body: JSON.stringify({
+      refUpdates: [{ name: "refs/heads/" + branch, oldObjectId: ref.objectId }],
+      commits: [{
+        comment: commitMessage,
+        changes: [{
+          changeType: "delete",
+          item: { path: filePath }
+        }]
+      }]
+    })
+  });
+  return true;
+}
 
 async function deriveShutdownToken(token: string, alias: string) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -363,24 +442,244 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
     const optionalConfigured = OPTIONAL_TS_SECRETS.filter(key => !!String(secrets(account)[key] || "").trim());
     return { provider: "azure", account: alias, organization: ctx.org, projects: discovery.projects.map(p => p.name), selected_project: project.name, repositories: repositories.map(r => r.name), pipelines: (discovery.pipelines[project.id] || []).map(p => ({ id: p.id, name: p.name })), credential_validated: true, hub_credentials_ready: !!hubUrls && hubToken.length >= 16, optional_configured_names: optionalConfigured, hub_urls_source: hubUrlConfig.source, missing_hub_secrets: [!hubUrls ? "HUB_URLS" : null, hubToken.length < 16 ? "MCP_TOKEN" : null].filter(Boolean), token_source: secrets(account).MCP_TOKEN ? "RTDB localmcpgo_secrets" : hubToken ? "Proxy runtime MCP_TOKEN" : null, credential_values_returned: false, cache: { discovered_at: new Date(discovery.discovered_at).toISOString(), ttl_seconds: CACHE_TTL_MS / 1000 } };
   }
-  if (name === "localmcp_hub_start") {
+  if (name === "localmcp_hub_list_workflows") {
+    const pipelineList = await refreshPipelines(ctx, account, alias, env, discovery, project);
+    const details = await Promise.all(pipelineList.map(async (p) => {
+      try {
+        const detail = await getPipelineDetail(ctx, project, p.id);
+        const cfg = detail?.configuration || {};
+        const yamlPath = typeof cfg.path === "string" ? cfg.path : null;
+        return {
+          id: p.id,
+          name: p.name,
+          type: cfg.type || "unknown",
+          yaml_path: yamlPath,
+          repository: cfg.repository?.name || null,
+          is_default: p.name === DEFAULT_AZURE_PIPELINE_NAME || yamlPath === DEFAULT_AZURE_YAML_PATH,
+          is_custom_managed: typeof yamlPath === "string" && isCustomAzureYamlPath(yamlPath),
+          url: detail?._links?.web?.href || p.url || null
+        };
+      } catch {
+        return {
+          id: p.id,
+          name: p.name,
+          type: "unknown",
+          yaml_path: null,
+          repository: null,
+          is_default: p.name === DEFAULT_AZURE_PIPELINE_NAME,
+          is_custom_managed: false,
+          url: p.url || null
+        };
+      }
+    }));
+    return {
+      provider: "azure",
+      account: alias,
+      project: project.name,
+      default_pipeline: DEFAULT_AZURE_PIPELINE_NAME,
+      default_yaml_path: DEFAULT_AZURE_YAML_PATH,
+      pipelines: details
+    };
+  }
+  if (name === "localmcp_hub_get_workflow") {
+    let pipelineList = discovery.pipelines[project.id] || [];
+    const requestedPipelineName = typeof args.pipeline === "string" && args.pipeline.trim() ? args.pipeline.trim() : "";
+    const requestedPipelineId = args.pipeline_id ? Number(args.pipeline_id) : 0;
+    let pipeline = requestedPipelineId
+      ? pipelineList.find(p => p.id === requestedPipelineId)
+      : pipelineList.find(p => p.name === (requestedPipelineName || DEFAULT_AZURE_PIPELINE_NAME));
+    if (!pipeline && (requestedPipelineId || requestedPipelineName)) {
+      pipelineList = await refreshPipelines(ctx, account, alias, env, discovery, project);
+      pipeline = requestedPipelineId
+        ? pipelineList.find(p => p.id === requestedPipelineId)
+        : pipelineList.find(p => p.name === requestedPipelineName);
+    }
+    let repo = chooseRepository(repositories, args.repository);
+    let yamlPath = typeof args.yaml_path === "string" && args.yaml_path.trim()
+      ? normalizeAzureYamlPath(args.yaml_path)
+      : DEFAULT_AZURE_YAML_PATH;
+    if (pipeline) {
+      const detail = await getPipelineDetail(ctx, project, pipeline.id);
+      const cfg = detail?.configuration || {};
+      if (typeof cfg.path === "string" && cfg.path) yamlPath = cfg.path;
+      const boundRepo = repositories.find(r => r.id === String(cfg.repository?.id || ""));
+      if (boundRepo) repo = boundRepo;
+    } else if (requestedPipelineId || requestedPipelineName) {
+      throw new Error("Azure Pipeline '" + (requestedPipelineName || requestedPipelineId) + "' was not found in project '" + project.name + "'.");
+    }
+    const file = await readAzureRepoFile(ctx, project, repo, yamlPath);
+    if (!file) throw new Error("YAML file '" + yamlPath + "' was not found in Azure Repos repository '" + repo.name + "'.");
+    const validation = validateAzureRunnerYaml(file.content);
+    return {
+      provider: "azure",
+      account: alias,
+      project: project.name,
+      repository: repo.name,
+      pipeline: pipeline ? { id: pipeline.id, name: pipeline.name } : null,
+      yaml_path: yamlPath,
+      branch: file.branch,
+      is_default: yamlPath === DEFAULT_AZURE_YAML_PATH || pipeline?.name === DEFAULT_AZURE_PIPELINE_NAME,
+      is_custom_managed: isCustomAzureYamlPath(yamlPath),
+      handover_compatible: validation.valid,
+      validation_errors: validation.errors,
+      yaml_content: file.content
+    };
+  }
+  if (name === "localmcp_hub_upsert_workflow") {
+    const pipelineName = typeof args.pipeline === "string" ? args.pipeline.trim() : "";
+    if (!pipelineName) throw new Error("pipeline name is required for Azure DevOps custom workflow creation/update.");
+    if (pipelineName === DEFAULT_AZURE_PIPELINE_NAME) {
+      throw new Error("Cannot overwrite default pipeline '" + DEFAULT_AZURE_PIPELINE_NAME + "'. Choose a custom pipeline name.");
+    }
+    const yamlPath = typeof args.yaml_path === "string" && args.yaml_path.trim()
+      ? normalizeAzureYamlPath(args.yaml_path)
+      : deriveCustomAzureYamlPath(pipelineName);
+    if (!isCustomAzureYamlPath(yamlPath)) {
+      throw new Error("Custom Azure yaml_path must match '/pipelines/hub-runner-<name>.yml' or '/azure-pipelines-<name>.yml' (cannot overwrite '/azure-pipelines.yml').");
+    }
+    const yamlContent = typeof args.yaml_content === "string" ? args.yaml_content : "";
+    const validation = validateAzureRunnerYaml(yamlContent);
+    if (!validation.valid) {
+      throw new Error("Raw Azure Pipeline YAML failed LocalMCP Hub handover validation: " + validation.errors.join(" "));
+    }
     const repo = chooseRepository(repositories, args.repository);
-    const pipelineList = discovery.pipelines[project.id] || [];
-    const pipelineName = typeof args.pipeline === "string" && args.pipeline.trim() ? args.pipeline.trim() : "LocalMCP Hub Runner";
-    let pipeline = args.pipeline_id ? pipelineList.find(p => p.id === Number(args.pipeline_id)) : pipelineList.find(p => p.name === pipelineName);
+    const commitMessage = typeof args.commit_message === "string" && args.commit_message.trim()
+      ? args.commit_message.trim().slice(0, 200)
+      : "ci: upsert custom LocalMCP Hub Azure pipeline " + yamlPath;
+    const pushRes = await pushAzureRepoFile(ctx, project, repo, yamlPath, yamlContent, commitMessage);
+    const pipelineList = await refreshPipelines(ctx, account, alias, env, discovery, project);
+    let pipeline = pipelineList.find(p => p.name === pipelineName);
+    let pipelineAction: "created" | "existing" = "existing";
     if (!pipeline) {
-      pipeline = await bootstrap(ctx, project, repo, alias, pipelineName);
-      await validateRunnerPipeline(ctx, project, pipeline, repo);
+      const created = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/pipelines", {
+        method: "POST",
+        body: JSON.stringify({
+          name: pipelineName,
+          folder: "\\",
+          configuration: {
+            type: "yaml",
+            path: yamlPath,
+            repository: { id: repo.id, name: repo.name, type: "azureReposGit" }
+          }
+        })
+      });
+      pipeline = { id: Number(created.id), name: String(created.name), folder: created.folder, url: created.url };
+      pipelineAction = "created";
       discovery.pipelines[project.id] = [...pipelineList, pipeline];
       await setLocalMcpCache(env, alias, { ...(account.localmcpgo_cache || {}), azure_devops: discovery });
-    } else await validateRunnerPipeline(ctx, project, pipeline, repo);
-    await ensureRunnerYaml(ctx, project, repo);
+    } else {
+      const detail = await getPipelineDetail(ctx, project, pipeline.id);
+      const cfg = detail?.configuration || {};
+      if (cfg.type !== "yaml" || cfg.path !== yamlPath || String(cfg.repository?.id || "") !== repo.id) {
+        throw new Error("Azure Pipeline '" + pipelineName + "' already exists with a different YAML path (" + String(cfg.path || "unknown") + ") or repository. Choose another pipeline name.");
+      }
+    }
+    const hubUrls = effectiveHubUrls(account, env).value;
+    const token = String(secrets(account).MCP_TOKEN || env.MCP_TOKEN || "").trim();
+    const variableGroup = hubUrls && token.length >= 16
+      ? await ensureVariableGroup(ctx, project, alias, hubUrls, token, pipeline.id, secrets(account))
+      : null;
+    return {
+      provider: "azure",
+      account: alias,
+      project: project.name,
+      repository: repo.name,
+      pipeline: { id: pipeline.id, name: pipeline.name },
+      yaml_path: yamlPath,
+      branch: pushRes.branch,
+      file_action: pushRes.action,
+      pipeline_action: pipelineAction,
+      variable_group: variableGroup,
+      handover_compatible: true
+    };
+  }
+  if (name === "localmcp_hub_delete_workflow") {
+    const requestedPipelineId = args.pipeline_id ? Number(args.pipeline_id) : 0;
+    const requestedPipelineName = typeof args.pipeline === "string" ? args.pipeline.trim() : "";
+    if (!requestedPipelineId && !requestedPipelineName) {
+      throw new Error("pipeline or pipeline_id is required to delete a custom Azure pipeline.");
+    }
+    const pipelineList = await refreshPipelines(ctx, account, alias, env, discovery, project);
+    const pipeline = requestedPipelineId
+      ? pipelineList.find(p => p.id === requestedPipelineId)
+      : pipelineList.find(p => p.name === requestedPipelineName);
+    if (!pipeline) throw new Error("Azure Pipeline '" + (requestedPipelineName || requestedPipelineId) + "' was not found.");
+    if (pipeline.name === DEFAULT_AZURE_PIPELINE_NAME) {
+      throw new Error("Refusing to delete default pipeline '" + DEFAULT_AZURE_PIPELINE_NAME + "'.");
+    }
+    const detail = await getPipelineDetail(ctx, project, pipeline.id);
+    const cfg = detail?.configuration || {};
+    const yamlPath = typeof cfg.path === "string" ? cfg.path : "";
+    if (!yamlPath || yamlPath === DEFAULT_AZURE_YAML_PATH || !isCustomAzureYamlPath(yamlPath)) {
+      throw new Error("Refusing to delete pipeline '" + pipeline.name + "': its YAML path ('" + (yamlPath || "unknown") + "') is not a custom Hub runner path.");
+    }
+    await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/definitions/" + pipeline.id, { method: "DELETE" });
+    let fileDeleted = false;
+    if (args.delete_file !== false) {
+      const boundRepo = repositories.find(r => r.id === String(cfg.repository?.id || "")) || chooseRepository(repositories, args.repository);
+      const commitMessage = typeof args.commit_message === "string" && args.commit_message.trim()
+        ? args.commit_message.trim().slice(0, 200)
+        : "ci: delete custom LocalMCP Hub Azure pipeline " + yamlPath;
+      fileDeleted = await deleteAzureRepoFile(ctx, project, boundRepo, yamlPath, commitMessage);
+    }
+    discovery.pipelines[project.id] = pipelineList.filter(p => p.id !== pipeline.id);
+    await setLocalMcpCache(env, alias, { ...(account.localmcpgo_cache || {}), azure_devops: discovery });
+    return {
+      provider: "azure",
+      account: alias,
+      project: project.name,
+      pipeline_id: pipeline.id,
+      pipeline_name: pipeline.name,
+      yaml_path: yamlPath,
+      pipeline_deleted: true,
+      file_deleted: fileDeleted
+    };
+  }
+  if (name === "localmcp_hub_start") {
+    let repo = chooseRepository(repositories, args.repository);
+    let pipelineList = discovery.pipelines[project.id] || [];
+    const pipelineName = typeof args.pipeline === "string" && args.pipeline.trim() ? args.pipeline.trim() : DEFAULT_AZURE_PIPELINE_NAME;
+    const isDefaultPipeline = !args.pipeline_id && pipelineName === DEFAULT_AZURE_PIPELINE_NAME;
+    let pipeline = args.pipeline_id ? pipelineList.find(p => p.id === Number(args.pipeline_id)) : pipelineList.find(p => p.name === pipelineName);
+    let pipelineYamlPath = DEFAULT_AZURE_YAML_PATH;
+    if (isDefaultPipeline) {
+      if (!pipeline) {
+        pipeline = await bootstrap(ctx, project, repo, alias, pipelineName);
+        await validateRunnerPipeline(ctx, project, pipeline, repo);
+        discovery.pipelines[project.id] = [...pipelineList, pipeline];
+        await setLocalMcpCache(env, alias, { ...(account.localmcpgo_cache || {}), azure_devops: discovery });
+      } else await validateRunnerPipeline(ctx, project, pipeline, repo);
+      await ensureRunnerYaml(ctx, project, repo);
+    } else {
+      if (!pipeline) {
+        pipelineList = await refreshPipelines(ctx, account, alias, env, discovery, project);
+        pipeline = args.pipeline_id ? pipelineList.find(p => p.id === Number(args.pipeline_id)) : pipelineList.find(p => p.name === pipelineName);
+      }
+      if (!pipeline) {
+        throw new Error("Custom Azure Pipeline '" + (args.pipeline_id || pipelineName) + "' was not found. Use localmcp_hub_upsert_workflow to create it first.");
+      }
+      const detail = await getPipelineDetail(ctx, project, pipeline.id);
+      const cfg = detail?.configuration || {};
+      if (cfg.type !== "yaml" || typeof cfg.path !== "string" || !cfg.path) {
+        throw new Error("Azure Pipeline '" + pipeline.name + "' is not a YAML pipeline.");
+      }
+      pipelineYamlPath = cfg.path;
+      const boundRepo = repositories.find(r => r.id === String(cfg.repository?.id || ""));
+      if (boundRepo) repo = boundRepo;
+    }
     const os = args.os === "windows" ? "windows" : "linux";
     const requestedDuration = Number(args.duration_seconds ?? 3000);
     if (!Number.isInteger(requestedDuration) || requestedDuration < 60) throw new Error("duration_seconds must be an integer of at least 60 seconds.");
     const duration = Math.min(3300, requestedDuration);
     const runnerName = typeof args.runner_name === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(args.runner_name) ? args.runner_name : "localmcp";
-    const runnerTags = typeof args.runner_tags === "string" && /^[A-Za-z0-9_:.,-]{1,300}$/.test(args.runner_tags) ? args.runner_tags : "go";
+    const baseRunnerTags = typeof args.runner_tags === "string" && /^[A-Za-z0-9_:.,-]{1,300}$/.test(args.runner_tags) ? args.runner_tags : "go";
+    const routingTags: string[] = [];
+    if (!isDefaultPipeline) {
+      routingTags.push("pipeline_id:" + pipeline.id);
+      if (/^[A-Za-z0-9_.-]{1,64}$/.test(project.name)) routingTags.push("project:" + project.name);
+      if (/^[A-Za-z0-9_.-]{1,64}$/.test(repo.name)) routingTags.push("azrepo:" + repo.name);
+    }
+    const runnerTags = routingTags.length ? appendRoutingTags(baseRunnerTags, routingTags) : baseRunnerTags;
     const hubUrlConfig = effectiveHubUrls(account, env);
     const hubUrls = hubUrlConfig.value;
     const token = String(secrets(account).MCP_TOKEN || env.MCP_TOKEN || "").trim();
@@ -399,7 +698,7 @@ async function runAzureHubToolInternal(name: string, args: Record<string, unknow
     const build = await request(ctx, "/" + encodeURIComponent(project.name) + "/_apis/build/builds/" + runId);
     const hubState = await findHubRunner(account, env, authContext, runnerId);
     const runStatus = pipelineStatus(build);
-    return { provider: "azure", account: alias, project: project.name, repository: repo.name, pipeline: { id: pipeline.id, name: pipeline.name }, variable_group: variableGroup, run_id: runId, runner_id: runnerId, os, runner_name: runnerName, runner_tags: ["provider:azure", "os:" + os, "account:" + alias, "run:" + runId, "name:" + runnerName, ...runnerTags.split(",")], duration_seconds: duration, ...runStatus, status: runStatus.state === "running" && !hubState.online ? "starting" : runStatus.status, runner_online: hubState.online, hub_runner: hubState.runner, ...(hubState.error ? { hub_error: hubState.error } : {}), workflow_url: build._links?.web?.href || build.url };
+    return { provider: "azure", account: alias, project: project.name, repository: repo.name, pipeline: { id: pipeline.id, name: pipeline.name, yaml_path: pipelineYamlPath }, variable_group: variableGroup, run_id: runId, runner_id: runnerId, os, runner_name: runnerName, runner_tags: ["provider:azure", "os:" + os, "account:" + alias, "run:" + runId, "name:" + runnerName, ...runnerTags.split(",")], duration_seconds: duration, ...runStatus, status: runStatus.state === "running" && !hubState.online ? "starting" : runStatus.status, runner_online: hubState.online, hub_runner: hubState.runner, ...(hubState.error ? { hub_error: hubState.error } : {}), workflow_url: build._links?.web?.href || build.url };
   }
   const pipelineList = discovery.pipelines[project.id] || [];
   const pipeline = args.pipeline_id
